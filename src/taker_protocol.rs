@@ -22,6 +22,8 @@ use bitcoincore_rpc::{Client, RpcApi};
 use rand::rngs::OsRng;
 use rand::RngCore;
 
+use itertools::izip;
+
 use crate::contracts;
 use crate::contracts::{
     create_contract_redeemscript, create_receivers_contract_tx, find_funding_output,
@@ -156,29 +158,31 @@ async fn send_coinswap(
             my_locktime,
         );
 
-    //TODO use that crate which has a macro implementing zip() for more than two iters
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::SignSendersContractTx(SignSendersContractTx {
-            txes_info: maker_multisig_key_nonces
-                .iter()
-                .zip(maker_hashlock_key_nonces.iter())
-                .zip(timelock_pubkeys.iter())
-                .zip(outgoing_swapcoins.iter())
-                .map(
-                    |(
-                        ((&multisig_key_nonce, &hashlock_key_nonce), &timelock_pubkey),
-                        outgoing_swapcoin,
-                    )| SenderContractTxNoncesInfo {
-                        multisig_key_nonce,
-                        hashlock_key_nonce,
-                        timelock_pubkey,
-                        senders_contract_tx: outgoing_swapcoin.contract_tx.clone(),
-                        multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                        funding_input_value: outgoing_swapcoin.funding_amount,
-                    },
-                )
-                .collect::<Vec<SenderContractTxNoncesInfo>>(),
+            txes_info: izip!(
+                maker_multisig_key_nonces.iter(),
+                maker_hashlock_key_nonces.iter(),
+                timelock_pubkeys.iter(),
+                outgoing_swapcoins.iter()
+            )
+            .map(
+                |(
+                    &multisig_key_nonce,
+                    &hashlock_key_nonce,
+                    &timelock_pubkey,
+                    outgoing_swapcoin,
+                )| SenderContractTxNoncesInfo {
+                    multisig_key_nonce,
+                    hashlock_key_nonce,
+                    timelock_pubkey,
+                    senders_contract_tx: outgoing_swapcoin.contract_tx.clone(),
+                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    funding_input_value: outgoing_swapcoin.funding_amount,
+                },
+            )
+            .collect::<Vec<SenderContractTxNoncesInfo>>(),
             hashvalue,
             locktime: my_locktime,
         }),
@@ -271,29 +275,30 @@ async fn send_coinswap(
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::ProofOfFunding(ProofOfFunding {
-            confirmed_funding_txes: my_funding_txes
-                .iter()
-                .zip(funding_tx_merkleproofs.iter())
-                .zip(outgoing_swapcoins.iter())
-                .zip(maker_multisig_key_nonces.iter())
-                .zip(maker_hashlock_key_nonces.iter())
-                .map(
-                    |(
-                        (
-                            ((funding_tx, funding_tx_merkleproof), outgoing_swapcoin),
-                            &multisig_key_nonce,
-                        ),
-                        &hashlock_key_nonce,
-                    )| ConfirmedCoinSwapTxInfo {
-                        funding_tx: funding_tx.clone(),
-                        funding_tx_merkleproof: funding_tx_merkleproof.clone(),
-                        multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                        multisig_key_nonce,
-                        contract_redeemscript: outgoing_swapcoin.contract_redeemscript.clone(),
-                        hashlock_key_nonce,
-                    },
-                )
-                .collect::<Vec<ConfirmedCoinSwapTxInfo>>(),
+            confirmed_funding_txes: izip!(
+                my_funding_txes.iter(),
+                funding_tx_merkleproofs.iter(),
+                outgoing_swapcoins.iter(),
+                maker_multisig_key_nonces.iter(),
+                maker_hashlock_key_nonces.iter()
+            )
+            .map(
+                |(
+                    funding_tx,
+                    funding_tx_merkleproof,
+                    outgoing_swapcoin,
+                    &multisig_key_nonce,
+                    &hashlock_key_nonce,
+                )| ConfirmedCoinSwapTxInfo {
+                    funding_tx: funding_tx.clone(),
+                    funding_tx_merkleproof: funding_tx_merkleproof.clone(),
+                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    multisig_key_nonce,
+                    contract_redeemscript: outgoing_swapcoin.contract_redeemscript.clone(),
+                    hashlock_key_nonce,
+                },
+            )
+            .collect::<Vec<ConfirmedCoinSwapTxInfo>>(),
             next_coinswap_info: maker_funded_multisig_pubkeys
                 .iter()
                 .zip(my_receiving_hashlock_pubkeys.iter())
@@ -465,21 +470,23 @@ async fn send_coinswap(
         })
         .collect::<Vec<u64>>();
 
-    let my_receivers_contract_txes = sign_sender_and_receiver_contract
-        .senders_contract_txes_info
-        .iter()
-        .zip(maker_funding_tx_values.iter())
-        .zip(next_contract_redeemscripts.iter())
-        .map(
-            |((senders_contract_tx_info, &maker_funding_tx_value), next_contract_redeemscript)| {
-                create_receivers_contract_tx(
-                    senders_contract_tx_info.contract_tx.input[0].previous_output,
-                    maker_funding_tx_value,
-                    next_contract_redeemscript,
-                )
-            },
-        )
-        .collect::<Vec<Transaction>>();
+    let my_receivers_contract_txes = izip!(
+        sign_sender_and_receiver_contract
+            .senders_contract_txes_info
+            .iter(),
+        maker_funding_tx_values.iter(),
+        next_contract_redeemscripts.iter()
+    )
+    .map(
+        |(senders_contract_tx_info, &maker_funding_tx_value, next_contract_redeemscript)| {
+            create_receivers_contract_tx(
+                senders_contract_tx_info.contract_tx.input[0].previous_output,
+                maker_funding_tx_value,
+                next_contract_redeemscript,
+            )
+        },
+    )
+    .collect::<Vec<Transaction>>();
 
     send_message(
         &mut socket_writer,
@@ -517,30 +524,24 @@ async fn send_coinswap(
 
     let mut incoming_swapcoins = Vec::<SwapCoin>::new();
     for (
-        (
-            (
-                (
-                    (
-                        (senders_contract_tx_info, &maker_funded_multisig_pubkey),
-                        &maker_funded_multisig_privkey,
-                    ),
-                    my_receivers_contract_tx,
-                ),
-                next_contract_redeemscript,
-            ),
-            &maker_funding_tx_value,
-        ),
+        senders_contract_tx_info,
+        &maker_funded_multisig_pubkey,
+        &maker_funded_multisig_privkey,
+        my_receivers_contract_tx,
+        next_contract_redeemscript,
+        &maker_funding_tx_value,
         &receiver_contract_sig,
-    ) in sign_sender_and_receiver_contract
-        .senders_contract_txes_info
-        .iter()
-        .zip(maker_funded_multisig_pubkeys.iter())
-        .zip(maker_funded_multisig_privkeys.iter())
-        .zip(my_receivers_contract_txes.iter())
-        .zip(next_contract_redeemscripts.iter())
-        .zip(maker_funding_tx_values.iter())
-        .zip(receiver_contract_sig.sigs.iter())
-    {
+    ) in izip!(
+        sign_sender_and_receiver_contract
+            .senders_contract_txes_info
+            .iter(),
+        maker_funded_multisig_pubkeys.iter(),
+        maker_funded_multisig_privkeys.iter(),
+        my_receivers_contract_txes.iter(),
+        next_contract_redeemscripts.iter(),
+        maker_funding_tx_values.iter(),
+        receiver_contract_sig.sigs.iter()
+    ) {
         let (o_ms_pubkey1, o_ms_pubkey2) = read_pubkeys_from_multisig_redeemscript(
             &senders_contract_tx_info.multisig_redeemscript,
         )

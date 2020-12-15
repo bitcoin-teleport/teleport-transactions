@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use std::collections::HashMap;
 
+use itertools::izip;
+
 extern crate bitcoin_wallet;
 use bitcoin_wallet::mnemonic;
 
@@ -746,11 +748,11 @@ impl Wallet {
 
         let mut spending_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
-        for ((address, &output_value), change_address) in destinations
-            .iter()
-            .zip(output_values.iter())
-            .zip(change_addresses.iter())
-        {
+        for (address, &output_value, change_address) in izip!(
+            destinations.iter(),
+            output_values.iter(),
+            change_addresses.iter()
+        ) {
             println!("output_value = {} to addr={}", output_value, address);
 
             let mut outputs = HashMap::<String, Amount>::new();
@@ -957,19 +959,20 @@ impl Wallet {
         let mut outgoing_swapcoins = Vec::<SwapCoin>::new();
 
         for (
-            (
-                (((my_funding_tx, utxo_index), &my_multisig_privkey), &other_multisig_pubkey),
-                hashlock_pubkey,
-            ),
+            my_funding_tx,
+            utxo_index,
+            &my_multisig_privkey,
+            &other_multisig_pubkey,
+            hashlock_pubkey,
             &funding_amount,
-        ) in my_funding_txes
-            .iter()
-            .zip(utxo_indexes.iter())
-            .zip(my_multisig_privkeys.iter())
-            .zip(other_multisig_pubkeys.iter())
-            .zip(hashlock_pubkeys.iter())
-            .zip(funding_amounts.iter())
-        {
+        ) in izip!(
+            my_funding_txes.iter(),
+            utxo_indexes.iter(),
+            my_multisig_privkeys.iter(),
+            other_multisig_pubkeys.iter(),
+            hashlock_pubkeys.iter(),
+            funding_amounts.iter()
+        ) {
             let (timelock_pubkey, timelock_privkey) = generate_keypair();
             contract_redeemscripts.push(contracts::create_contract_redeemscript(
                 hashlock_pubkey,

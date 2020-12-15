@@ -14,6 +14,8 @@ use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::{OutPoint, PublicKey, Transaction, TxOut};
 use bitcoincore_rpc::{Client, RpcApi};
 
+use itertools::izip;
+
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
     ReceiversContractSig, SenderContractTxInfo, SendersAndReceiversContractSigs,
@@ -301,13 +303,12 @@ fn handle_proof_of_funding(
     println!("proof of funding valid, creating own funding txes");
 
     connection_state.incoming_swapcoins = Some(Vec::<SwapCoin>::new());
-    for (((funding_info, &funding_output_index), &funding_output), &incoming_swapcoin_keys) in proof
-        .confirmed_funding_txes
-        .iter()
-        .zip(funding_output_indexes.iter())
-        .zip(funding_outputs.iter())
-        .zip(incoming_swapcoin_keys.iter())
-    {
+    for (funding_info, &funding_output_index, &funding_output, &incoming_swapcoin_keys) in izip!(
+        proof.confirmed_funding_txes.iter(),
+        funding_output_indexes.iter(),
+        funding_outputs.iter(),
+        incoming_swapcoin_keys.iter()
+    ) {
         wallet
             .read()
             .unwrap()
