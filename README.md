@@ -106,7 +106,7 @@ Here are links to some reading material for any developers who want to get up to
 
 ### Protocol between takers and makers
 
-Alice is the taker, Bob and Charlie are makers. For a detailed explaination including definitions see the mailing list email [here](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html). That email should be read first and then you can jump back to the diagram below when needed while reading the code.
+Alice is the taker, Bob and Charlie are makers. For a detailed explanation including definitions see the mailing list email [here](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html). That email should be read first and then you can jump back to the diagram below when needed while reading the code.
 
 Protocol messages are defined by the structs found in `src/messages.rs` and serialized into json with rust's serde crate.
 
