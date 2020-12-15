@@ -49,7 +49,7 @@ total balance = 0.15000000 BTC
 ```
 
 ```
-$ cargo run wallet-balance taker.teleport
+$ cargo run wallet-balance maker.teleport
 outpoint         address                  swapcoin conf    value
 5f4331..d53f14:0 bcrt1qmflt....q2ucgf2teu    no    1       0.05000000 BTC
 6252ee..d827b0:0 bcrt1qu9mk....pwpedjyl9u    no    1       0.05000000 BTC
