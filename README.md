@@ -163,7 +163,7 @@ In this protocol its always important to as much as possible avoid DOS attack op
 * &#9745; code simplest possible wallet, seed phrases "generate" and "recover", no fidelity bonds, everything is sybil attackable or DOS attackable for now, no RBF
 * &#9745; implement creation and signing of traditional multisig
 * &#9745; code makers and takers to support simple coinswap
-* &#9745; code makers and takers to support multi-transaction coinswaps without any securuty (e.g. no broadcasting of contract transactions)
+* &#9745; code makers and takers to support multi-transaction coinswaps without any security (e.g. no broadcasting of contract transactions)
 * &#9744; code makers and takers to support multi-hop coinswaps without security
 * &#9744; write more developer documentation
 * &#9744; implement and deploy fidelity bonds in joinmarket
@@ -177,9 +177,9 @@ In this protocol its always important to as much as possible avoid DOS attack op
 * &#9744; RELEASE FOR TESTNET AND MAYBE MAINNET
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
 * &#9744; add encrypted wallet files
-* &#9744; add automated incremental backups for wallet files, because seed phrases arent enough to backup these wallets
+* &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to backup these wallets
 * &#9744; move wallet files and config to its own data directory ~/.teleport/
-* &#9744; watchtowers in a seperate process
+* &#9744; watchtowers in a separate process
 * &#9744; reproducible builds + pin dependencies to a hash
 * &#9744; break as many blockchain analysis heuristics as possible, e.g. change address detection
 * &#9744; payjoin-with-coinswap with decoy UTXOs
