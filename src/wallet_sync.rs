@@ -53,6 +53,7 @@ use rand::RngCore;
 
 use crate::contracts;
 use crate::contracts::read_pubkeys_from_multisig_redeemscript;
+use std::path::Path;
 
 //these subroutines are coded so that as much as possible they keep all their
 //data in the bitcoin core wallet
@@ -166,15 +167,15 @@ impl SwapCoin {
 }
 
 impl Wallet {
-    pub fn save_new_wallet_file(
-        wallet_file_name: &str,
+    pub fn save_new_wallet_file<P: AsRef<Path>>(
+        wallet_file_name: P,
         seedphrase: String,
         extension: String,
     ) -> std::io::Result<()> {
         let wallet_file_data = WalletFileData {
             version: WALLET_FILE_VERSION,
-            seedphrase: seedphrase,
-            extension: extension,
+            seedphrase,
+            extension,
             external_index: 0,
             swap_coins: Vec::new(),
             prevout_to_contract_map: HashMap::<OutPoint, Script>::new(),
@@ -184,15 +185,22 @@ impl Wallet {
         Ok(())
     }
 
-    fn load_wallet_file_data(wallet_file_name: &str) -> std::io::Result<WalletFileData> {
+    fn load_wallet_file_data<P: AsRef<Path>>(
+        wallet_file_name: P,
+    ) -> std::io::Result<WalletFileData> {
         let mut wallet_file = File::open(wallet_file_name)?;
         let mut wallet_file_str = String::new();
         wallet_file.read_to_string(&mut wallet_file_str)?;
         Ok(serde_json::from_str::<WalletFileData>(&wallet_file_str)?)
     }
 
-    pub fn load_wallet_from_file(wallet_file_name: &str) -> std::io::Result<Wallet> {
-        let wallet_file_data = Wallet::load_wallet_file_data(wallet_file_name)?;
+    pub fn load_wallet_from_file<P: AsRef<Path>>(wallet_file_name: P) -> std::io::Result<Wallet> {
+        let wallet_file_name = wallet_file_name
+            .as_ref()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+        let wallet_file_data = Wallet::load_wallet_file_data(&wallet_file_name)?;
         let mnemonic_ret = mnemonic::Mnemonic::from_str(&wallet_file_data.seedphrase);
         if mnemonic_ret.is_err() {
             return Err(io::Error::new(io::ErrorKind::Other, "invalid seed phrase"));
@@ -205,7 +213,7 @@ impl Wallet {
 
         let wallet = Wallet {
             master_key: xprv,
-            wallet_file_name: String::from(wallet_file_name),
+            wallet_file_name,
             external_index: wallet_file_data.external_index,
             swap_coins: wallet_file_data
                 .swap_coins
