@@ -1,4 +1,3 @@
-use std::env;
 use std::io;
 
 use std::sync::{Arc, RwLock};
@@ -13,9 +12,12 @@ use bitcoin::Amount;
 extern crate bitcoincore_rpc;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
+use structopt::StructOpt;
+
 extern crate rand;
 
 mod wallet_sync;
+use std::path::PathBuf;
 use wallet_sync::Wallet;
 
 mod contracts;
@@ -24,7 +26,7 @@ mod messages;
 mod offerbook_sync;
 mod taker_protocol;
 
-fn generate_wallet() -> std::io::Result<()> {
+fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
@@ -32,14 +34,6 @@ fn generate_wallet() -> std::io::Result<()> {
             return Ok(());
         }
     };
-
-    println!("enter wallet file name (default wallet.teleport): ");
-    let mut wallet_file_name = String::new();
-    io::stdin().read_line(&mut wallet_file_name)?;
-    wallet_file_name = wallet_file_name.trim_end().to_string();
-    if wallet_file_name.len() == 0 {
-        wallet_file_name = String::from("wallet.teleport");
-    }
 
     println!("input seed phrase extension (or leave blank for none): ");
     let mut extension = String::new();
@@ -75,7 +69,7 @@ fn generate_wallet() -> std::io::Result<()> {
     Ok(())
 }
 
-fn recover_wallet() -> std::io::Result<()> {
+fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     println!("input seed phrase: ");
     let mut seed_phrase = String::new();
     io::stdin().read_line(&mut seed_phrase)?;
@@ -90,14 +84,6 @@ fn recover_wallet() -> std::io::Result<()> {
     let mut extension = String::new();
     io::stdin().read_line(&mut extension)?;
     extension = extension.trim().to_string();
-
-    println!("enter wallet file name (default wallet.teleport): ");
-    let mut wallet_file_name = String::new();
-    io::stdin().read_line(&mut wallet_file_name)?;
-    wallet_file_name = wallet_file_name.trim_end().to_string();
-    if wallet_file_name.len() == 0 {
-        wallet_file_name = String::from("wallet.teleport");
-    }
 
     Wallet::save_new_wallet_file(&wallet_file_name, seed_phrase, extension)?;
     Ok(())
@@ -121,7 +107,7 @@ fn get_bitcoin_rpc() -> Result<Client, Error> {
     Ok(rpc)
 }
 
-fn display_wallet_balance(wallet_file_name: &str) {
+fn display_wallet_balance(wallet_file_name: &PathBuf) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
@@ -165,7 +151,7 @@ fn display_wallet_balance(wallet_file_name: &str) {
     println!("total balance = {}", balance);
 }
 
-fn print_receive_invoice(wallet_file_name: &str) {
+fn print_receive_invoice(wallet_file_name: &PathBuf) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
@@ -186,7 +172,7 @@ fn print_receive_invoice(wallet_file_name: &str) {
     println!("receive invoice:\n\nbitcoin:{}\n", addr);
 }
 
-fn run_maker(wallet_file_name: &str, port: u16) {
+fn run_maker(wallet_file_name: &PathBuf, port: u16) {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
@@ -208,7 +194,7 @@ fn run_maker(wallet_file_name: &str, port: u16) {
     maker_protocol::start_maker(rpc_ptr, wallet_ptr, port);
 }
 
-fn run_taker(wallet_file_name: &str) {
+fn run_taker(wallet_file_name: &PathBuf) {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
@@ -227,19 +213,68 @@ fn run_taker(wallet_file_name: &str) {
     taker_protocol::start_taker(&rpc, &mut wallet);
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("usage: [method] [wallet-file]");
+#[derive(Debug, StructOpt)]
+#[structopt(name = "teleport", about = "A tool for CoinSwap")]
+struct ArgsWithWalletFile {
+    /// Wallet file
+    #[structopt(default_value = "wallet.teleport", parse(from_os_str), long)]
+    wallet_file_name: PathBuf,
+
+    /// Subcommand
+    #[structopt(flatten)]
+    subcommand: Subcommand,
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(name = "teleport", about = "A tool for CoinSwap")]
+enum Subcommand {
+    /// Generates a new wallet file from a given seed phrase.
+    GenerateWallet,
+
+    /// Recovers a wallet file from a given seed phrase.
+    RecoverWallet,
+
+    /// Prints current wallet balance.
+    WalletBalance,
+
+    /// Prints receive invoice.
+    GetReceiveInvoice,
+
+    /// Runs Maker server on provided port.
+    RunMaker { port: u16 },
+
+    /// Runs Taker.
+    CoinswapSend,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = ArgsWithWalletFile::from_args();
+
+    match args.subcommand {
+        Subcommand::GenerateWallet => {
+            generate_wallet(&args.wallet_file_name)?;
+        }
+
+        Subcommand::RecoverWallet => {
+            recover_wallet(&args.wallet_file_name)?;
+        }
+
+        Subcommand::WalletBalance => {
+            display_wallet_balance(&args.wallet_file_name);
+        }
+
+        Subcommand::GetReceiveInvoice => {
+            print_receive_invoice(&args.wallet_file_name);
+        }
+
+        Subcommand::RunMaker { port } => {
+            run_maker(&args.wallet_file_name, port);
+        }
+
+        Subcommand::CoinswapSend => {
+            run_taker(&args.wallet_file_name);
+        }
     }
-    match &args[1] as &str {
-        "generate-wallet" => generate_wallet().expect("io error"),
-        "recover-wallet" => recover_wallet().expect("io error"),
-        "wallet-balance" => display_wallet_balance(&args[2]),
-        "get-receive-invoice" => print_receive_invoice(&args[2]),
-        "run-maker" => run_maker(&args[2], 6102),
-        //args[3].parse::<u16>().unwrap()),
-        "coinswap-send" => run_taker(&args[2]),
-        _ => println!("no command"),
-    };
+
+    Ok(())
 }

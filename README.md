@@ -31,14 +31,14 @@ The project is nowhere near usable. The code written so far is published for dev
 
 * Download this git repository. Open the file `src/main.rs` and edit the RPC username and password in the function `get_bitcoin_rpc`. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same function.
 
-* Create two teleport wallets by running `cargo run generate-wallet` twice. Call them something like `maker.teleport` and `taker.teleport`.
+* Create two teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` twice. Instead of `<wallet-name>`, use something like `maker.teleport` and `taker.teleport`.
 
-* Use `cargo run get-receive-invoice maker.teleport` to obtain 3 addresses of the maker wallet, and send regtest bitcoins to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Do this as well for the `taker.teleport` wallet. Get the transactions confirmed.
+* Use `cargo run -- --wallet-file-name=maker.teleport get-receive-invoice` to obtain 3 addresses of the maker wallet, and send regtest bitcoins to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Do this as well for the `taker.teleport` wallet. Get the transactions confirmed.
 
-* Check your balance with `cargo run wallet-balance maker.teleport`. Example:
+* Check your balance with `cargo run -- --wallet-file-name=maker.teleport wallet-balance`. Example:
 
 ```
-$ cargo run wallet-balance taker.teleport
+$ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
 8f6ee5..74e813:0 bcrt1q0vn5....nrjdqljtaq    no    1       0.05000000 BTC
 d548a8..cadd5e:0 bcrt1qaylc....vnw4ay98jq    no    1       0.05000000 BTC
@@ -49,7 +49,7 @@ total balance = 0.15000000 BTC
 ```
 
 ```
-$ cargo run wallet-balance maker.teleport
+$ cargo run -- --wallet-file-name=maker.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
 5f4331..d53f14:0 bcrt1qmflt....q2ucgf2teu    no    1       0.05000000 BTC
 6252ee..d827b0:0 bcrt1qu9mk....pwpedjyl9u    no    1       0.05000000 BTC
@@ -58,14 +58,14 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-* On one terminal run the maker server with `cargo run run-maker maker.teleport`. You should see the message `listening on port 6102`.
+* On one terminal run the maker server with `cargo run -- --wallet-file-name=maker.teleport run-maker 6102`. You should see the message `listening on port 6102`.
 
-* On another terminal start a coinswap with `cargo run coinswap-send taker.teleport`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell regtest to generate another block (or just wait if you're using testnet).
+* On another terminal start a coinswap with `cargo run -- --wallet-file-name=taker.teleport coinswap-send`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell regtest to generate another block (or just wait if you're using testnet).
 
 * Once you see the message `successfully completed coinswap` on both terminals then check the wallet balance again to see the result of the coinswap. Example:
 
 ```
-$ cargo run wallet-balance taker.teleport
+$ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
 d33f06..30dd07:0 bcrt1q8hjk....9g9q444076   yes    1       0.01240012 BTC
 8aaa89..ef5613:0 bcrt1qaapk....7ytxhclfm5    no    2       0.04913714 BTC
@@ -78,7 +78,7 @@ total balance = 0.14984858 BTC
 ```
 
 ```
-$ cargo run wallet-balance maker.teleport
+$ cargo run -- --wallet-file-name=maker.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
 d33f06..30dd07:1 bcrt1q6dqq....hyv7ak568q    no    1       0.03758274 BTC
 8aaa89..ef5613:1 bcrt1qw74e....9phqzpvflr   yes    2       0.00084572 BTC
