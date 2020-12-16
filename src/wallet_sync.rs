@@ -44,7 +44,6 @@ use bitcoincore_rpc::json::{
 };
 use bitcoincore_rpc::{Client, RpcApi};
 
-use serde_json;
 use serde_json::json;
 use serde_json::Value;
 
@@ -235,11 +234,7 @@ impl Wallet {
 
     pub fn update_swap_coins_list(&self) -> io::Result<()> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
-        wallet_file_data.swap_coins = self
-            .swap_coins
-            .values()
-            .map(|s| s.clone())
-            .collect::<Vec<SwapCoin>>();
+        wallet_file_data.swap_coins = self.swap_coins.values().cloned().collect::<Vec<SwapCoin>>();
         let wallet_file = File::create(&self.wallet_file_name[..])?;
         serde_json::to_writer(wallet_file, &wallet_file_data)?;
         Ok(())
@@ -381,8 +376,8 @@ impl Wallet {
     pub fn import_initial_addresses(
         &self,
         rpc: &Client,
-        descriptors_to_import: &Vec<&String>,
-        swapcoins_to_import: &Vec<&(Script, Script)>,
+        descriptors_to_import: &[&String],
+        swapcoins_to_import: &[&(Script, Script)],
     ) {
         let core_wallet_label = self.get_core_wallet_label();
 
@@ -448,7 +443,7 @@ impl Wallet {
             .filter(|(rs, _spk)| !self.is_swapcoin_redeemscript_imported(rpc, &rs))
             .collect::<Vec<&(Script, Script)>>();
 
-        if descriptors_to_import.len() == 0 && swapcoins_to_import.len() == 0 {
+        if descriptors_to_import.is_empty() && swapcoins_to_import.is_empty() {
             return;
         }
 
@@ -484,8 +479,7 @@ impl Wallet {
                 .unwrap();
             let txid = Txid::from_hex(unspent["txid"].as_str().unwrap()).unwrap();
             let rawtx = rpc.get_raw_transaction_hex(&txid, Some(&blockhash));
-            if rawtx.is_ok() {
-                let rawtx_hex = rawtx.unwrap();
+            if let Ok(rawtx_hex) = rawtx {
                 let merkleproof = rpc
                     .get_tx_out_proof(&[txid], Some(&blockhash))
                     .unwrap()
@@ -555,14 +549,14 @@ impl Wallet {
             //e.g
             //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
             let desc = utxo.descriptor.unwrap();
-            let open = desc.find("[");
-            let close = desc.find("]");
+            let open = desc.find('[');
+            let close = desc.find(']');
             if open.is_none() || close.is_none() {
                 println!("unknown descriptor = {}", desc);
                 continue;
             }
             let path = &desc[open.unwrap() + 1..close.unwrap()];
-            let path_chunks: Vec<&str> = path.split("/").collect();
+            let path_chunks: Vec<&str> = path.split('/').collect();
             if path_chunks.len() != 3 {
                 println!("unexpected descriptor = {}", desc);
                 continue;
@@ -708,7 +702,7 @@ impl Wallet {
         &self,
         rpc: &Client,
         coinswap_amount: u64,
-        destinations: &Vec<Address>,
+        destinations: &[Address],
     ) -> (Vec<Transaction>, Vec<u32>, Vec<u64>) {
         //return funding_txes, position_of_output, output_value
 
@@ -939,8 +933,8 @@ impl Wallet {
         &mut self,
         rpc: &Client,
         total_coinswap_amount: u64,
-        other_multisig_pubkeys: &Vec<PublicKey>,
-        hashlock_pubkeys: &Vec<PublicKey>,
+        other_multisig_pubkeys: &[PublicKey],
+        hashlock_pubkeys: &[PublicKey],
         hashvalue: [u8; 20],
         locktime: i64, //returns: funding_tx, swapcoin, timelock_pubkey, timelock_privkey
     ) -> (

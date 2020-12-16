@@ -6,7 +6,6 @@ use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 
-use serde_json;
 use serde_json::Value;
 
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
@@ -154,8 +153,7 @@ fn handle_message(
         Some(allowed_method) => method == allowed_method,
         None => NEWLY_CONNECTED_TAKER_ALLOWED_METHODS
             .iter()
-            .position(|&r| r == method)
-            .is_some(),
+            .any(|&r| r == method),
     };
     if !is_method_allowed {
         return Err("unexpected method");
