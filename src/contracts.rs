@@ -192,7 +192,7 @@ pub fn validate_and_sign_senders_contract_tx(
     };
 
     let secp = Secp256k1::new();
-    let mut hashlock_privkey_from_nonce = tweakable_privkey.clone();
+    let mut hashlock_privkey_from_nonce = *tweakable_privkey;
     hashlock_privkey_from_nonce
         .add_assign(hashlock_key_nonce.as_ref())
         .unwrap(); //TODO malicious taker could use this to crash maker
@@ -216,7 +216,7 @@ pub fn validate_and_sign_senders_contract_tx(
         )
         .unwrap();
 
-    let mut multisig_privkey_from_nonce = tweakable_privkey.clone();
+    let mut multisig_privkey_from_nonce = *tweakable_privkey;
     multisig_privkey_from_nonce
         .add_assign(multisig_key_nonce.as_ref())
         .unwrap();
@@ -323,7 +323,7 @@ pub fn verify_proof_of_funding(
         Ok(_valid_from_cache) => (),
     };
 
-    let mut my_privkey = tweakable_privkey.clone();
+    let mut my_privkey = tweakable_privkey;
     //TODO error handle
     my_privkey
         .add_assign(funding_info.multisig_key_nonce.as_ref())

@@ -9,8 +9,6 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::time::sleep;
 
-use serde_json;
-
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
@@ -87,9 +85,9 @@ async fn read_message(
     Ok(message)
 }
 
-async fn connect_to_maker<'a>(
-    socket: &'a mut TcpStream,
-) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), Box<dyn Error>> {
+async fn connect_to_maker(
+    socket: &mut TcpStream,
+) -> Result<(BufReader<ReadHalf<'_>>, WriteHalf<'_>), Box<dyn Error>> {
     println!("connected to maker");
 
     let (socket_reader, mut socket_writer) = socket.split();

@@ -3,8 +3,6 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
 
-use serde_json;
-
 use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerHello, TakerToMakerMessage};
 
 #[derive(Debug)]

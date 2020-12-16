@@ -46,7 +46,7 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
 
     println!("Write down this seed phrase =\n{}", mnemonic.to_string());
 
-    if extension.trim().len() > 0 {
+    if !extension.trim().is_empty() {
         println!("And this extension =\n\"{}\"", extension);
     }
 
@@ -128,8 +128,8 @@ fn display_wallet_balance(wallet_file_name: &PathBuf) {
     let utxo_count = utxos.len();
     let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
     println!(
-        "{:16} {:24} {:8} {:<7} {}",
-        "outpoint", "address", "swapcoin", "conf", "value"
+        "{:16} {:24} {:8} {:<7} value",
+        "outpoint", "address", "swapcoin", "conf",
     );
     for utxo in utxos {
         let txid = utxo.txid.to_hex();
