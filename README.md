@@ -157,36 +157,36 @@ In this protocol its always important to as much as possible avoid DOS attack op
 
 ## Chris Belcher's personal roadmap for the project
 
-* &#9745; learn rust
-* &#9745; learn rust-bitcoin
-* &#9745; design a protocol where all the features (vanilla coinswap, multi-tx coinswap, routed coinswap, branching routed coinswap, privkey handover) can be done, and publish to mailing list
-* &#9745; code simplest possible wallet, seed phrases "generate" and "recover", no fidelity bonds, everything is sybil attackable or DOS attackable for now, no RBF
-* &#9745; implement creation and signing of traditional multisig
-* &#9745; code makers and takers to support simple coinswap
-* &#9745; code makers and takers to support multi-transaction coinswaps without any security (e.g. no broadcasting of contract transactions)
-* &#9744; code makers and takers to support multi-hop coinswaps without security
-* &#9744; write more developer documentation
-* &#9744; set up a solution to mirror this repository somewhere else in case github rm's it like they did youtube-dl
-* &#9744; implement and deploy fidelity bonds in joinmarket
-* &#9744; code security. For now watchtowers only in the same process as the main scripts
-* &#9744; code fidelity bonds
-* &#9744; implement coinswap fees and taker paying for miner fees
-* &#9744; code federated message board seeder servers
-* &#9744; add collateral inputs to receiver contract txes
-* &#9744; add support for miner fees and precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
-* &#9744; automated tests (might be earlier in case its useful in test driven development)
-* &#9744; RELEASE FOR TESTNET AND MAYBE MAINNET
-* &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
-* &#9744; add encrypted wallet files
-* &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to backup these wallets
-* &#9744; move wallet files and config to its own data directory ~/.teleport/
-* &#9744; watchtowers in a separate process
-* &#9744; reproducible builds + pin dependencies to a hash
-* &#9744; break as many blockchain analysis heuristics as possible, e.g. change address detection
-* &#9744; payjoin-with-coinswap with decoy UTXOs
-* &#9744; abstract away the Core RPC so that its functions can done another way, for example for the taker being supported as a plugin for electrum
-* &#9744; randomized locktimes, study with bayesian inference the best way to randomize them so that an individual maker learns as little information as possible from the locktime value
-* &#9744; anti-DOS protocol additions for maker (not using json but some kind of binary format that is harder to DOS)
+- [x] learn rust
+- [x] learn rust-bitcoin
+- [x] design a protocol where all the features (vanilla coinswap, multi-tx coinswap, routed coinswap, branching routed coinswap, privkey handover) can be done, and publish to mailing list
+- [x] code simplest possible wallet, seed phrases "generate" and "recover", no fidelity bonds, everything is sybil attackable or DOS attackable for now, no RBF
+- [x] implement creation and signing of traditional multisig
+- [x] code makers and takers to support simple coinswap
+- [x] code makers and takers to support multi-transaction coinswaps without any security (e.g. no broadcasting of contract transactions)
+- [ ] code makers and takers to support multi-hop coinswaps without security
+- [ ] write more developer documentation
+- [ ] set up a solution to mirror this repository somewhere else in case github rm's it like they did youtube-dl
+- [ ] implement and deploy fidelity bonds in joinmarket
+- [ ] code security. For now watchtowers only in the same process as the main scripts
+- [ ] code fidelity bonds
+- [ ] implement coinswap fees and taker paying for miner fees
+- [ ] code federated message board seeder servers
+- [ ] add collateral inputs to receiver contract txes
+- [ ] add support for miner fees and precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
+- [ ] automated tests (might be earlier in case its useful in test driven development)
+- [ ] RELEASE FOR TESTNET AND MAYBE MAINNET
+- [ ] study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
+- [ ] add encrypted wallet files
+- [ ] add automated incremental backups for wallet files, because seed phrases aren't enough to backup these wallets
+- [ ] move wallet files and config to its own data directory ~/.teleport/
+- [ ] watchtowers in a separate process
+- [ ] reproducible builds + pin dependencies to a hash
+- [ ] break as many blockchain analysis heuristics as possible, e.g. change address detection
+- [ ] payjoin-with-coinswap with decoy UTXOs
+- [ ] abstract away the Core RPC so that its functions can done another way, for example for the taker being supported as a plugin for electrum
+- [ ] randomized locktimes, study with bayesian inference the best way to randomize them so that an individual maker learns as little information as possible from the locktime value
+- [ ] anti-DOS protocol additions for maker (not using json but some kind of binary format that is harder to DOS)
 
 ## Community
 
