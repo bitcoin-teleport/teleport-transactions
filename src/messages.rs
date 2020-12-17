@@ -96,7 +96,7 @@ pub struct SwapCoinPrivateKey {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PrivateKeyHandover {
-    pub swapcoin_private_keys: Vec<SwapCoinPrivateKey>,
+    pub swapcoin_private_keys: Vec<SwapCoinPrivateKey>, //could easily be called private_keys not swapcoin_private_keys
 }
 
 #[derive(Debug, Serialize, Deserialize)]

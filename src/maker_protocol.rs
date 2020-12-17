@@ -21,7 +21,7 @@ use crate::messages::{
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
-use crate::wallet_sync::{SwapCoin, Wallet};
+use crate::wallet_sync::{CoreAddressLabelType, SwapCoin, Wallet};
 
 use crate::contracts;
 use crate::contracts::{find_funding_output, read_hashvalue_from_contract};
@@ -221,6 +221,8 @@ fn handle_sign_senders_contract_tx(
     message: SignSendersContractTx,
 ) -> Result<Option<MakerToTakerMessage>, &'static str> {
     let tweakable_privkey = wallet.read().unwrap().get_tweakable_keypair().0;
+    //TODO this for loop could be replaced with an iterator and map
+    //see that other example where Result<> inside an iterator is used
     let mut sigs = Vec::<Signature>::new();
     for txinfo in message.txes_info {
         let sig = match contracts::validate_and_sign_senders_contract_tx(
@@ -307,10 +309,11 @@ fn handle_proof_of_funding(
         funding_outputs.iter(),
         incoming_swapcoin_keys.iter()
     ) {
-        wallet
-            .read()
-            .unwrap()
-            .import_redeemscript(&rpc, &funding_info.multisig_redeemscript);
+        wallet.read().unwrap().import_redeemscript(
+            &rpc,
+            &funding_info.multisig_redeemscript,
+            CoreAddressLabelType::Wallet,
+        );
         wallet.read().unwrap().import_tx_with_merkleproof(
             &rpc,
             &funding_info.funding_tx,

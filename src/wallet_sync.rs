@@ -40,7 +40,7 @@ use bitcoin::{
 extern crate bitcoincore_rpc;
 use bitcoincore_rpc::json::{
     ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
-    ListUnspentResultEntry, WalletCreateFundedPsbtOptions,
+    ListUnspentResultEntry, WalletCreateFundedPsbtOptions
 };
 use bitcoincore_rpc::{Client, RpcApi};
 
@@ -76,14 +76,18 @@ struct WalletFileData {
     prevout_to_contract_map: HashMap<OutPoint, Script>,
 }
 
-//TODO swap_coins should probably be a HashMap<Script, SwapCoin>
-//where Script is the multisig redeemscript
 pub struct Wallet {
     master_key: ExtendedPrivKey,
     wallet_file_name: String,
     external_index: u32,
     swap_coins: HashMap<Script, SwapCoin>,
 }
+
+pub enum CoreAddressLabelType {
+    Wallet,
+    WatchOnlySwapCoin,
+}
+const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
 //they are made in the process of a coinswap
@@ -379,7 +383,7 @@ impl Wallet {
         descriptors_to_import: &[&String],
         swapcoins_to_import: &[&(Script, Script)],
     ) {
-        let core_wallet_label = self.get_core_wallet_label();
+        let address_label = self.get_core_wallet_label();
 
         let import_requests = descriptors_to_import
             .iter()
@@ -388,7 +392,7 @@ impl Wallet {
                 descriptor: Some(desc),
                 range: Some((0, INITIAL_ADDRESS_IMPORT_COUNT - 1)),
                 watchonly: Some(true),
-                label: Some(&core_wallet_label),
+                label: Some(&address_label),
                 ..Default::default()
             })
             .chain(
@@ -399,7 +403,7 @@ impl Wallet {
                         script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(scriptpubkey)),
                         redeem_script: Some(redeemscript),
                         watchonly: Some(true),
-                        label: Some(&core_wallet_label),
+                        label: Some(&address_label),
                         ..Default::default()
                     }),
             )
@@ -501,26 +505,28 @@ impl Wallet {
         self.update_external_index(max_external_index).unwrap();
     }
 
+    fn is_utxo_not_ours(&self, u: &ListUnspentResultEntry, address_label: &String) -> bool {
+        u.label.as_ref().unwrap_or(&String::new()) != address_label
+            || u.witness_script.is_some()
+                && self
+                    .find_swapcoin(
+                        u.witness_script
+                            .as_ref()
+                            .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
+                    )
+                    .map_or(true, |sc| sc.other_privkey.is_none())
+    }
+
     pub fn lock_all_nonwallet_unspents(&self, rpc: &Client) -> bitcoincore_rpc::Result<()> {
         //rpc.unlock_unspent(&[])?;
         //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
 
-        let core_wallet_label = self.get_core_wallet_label();
+        let address_label = self.get_core_wallet_label();
         let all_unspents = rpc.list_unspent(None, None, None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
-            .filter(|u| {
-                u.label.as_ref().unwrap_or(&String::new()) != &core_wallet_label
-                    || u.witness_script.is_some()
-                        && self
-                            .find_swapcoin(
-                                u.witness_script
-                                    .as_ref()
-                                    .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
-                            )
-                            .map_or(true, |sc| sc.other_privkey.is_none())
-            })
+            .filter(|u| self.is_utxo_not_ours(u, &address_label))
             .map(|u| OutPoint {
                 txid: u.txid,
                 vout: u.vout,
@@ -534,8 +540,14 @@ impl Wallet {
         &self,
         rpc: &Client,
     ) -> bitcoincore_rpc::Result<Vec<ListUnspentResultEntry>> {
-        self.lock_all_nonwallet_unspents(rpc)?;
-        Ok(rpc.list_unspent(None, None, None, None, None)?)
+        let address_label = self.get_core_wallet_label();
+        rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        Ok(rpc.list_unspent(None, None, None, None, None)?
+            .iter()
+            .filter(|u| !self.is_utxo_not_ours(u, &address_label))
+            .map(|u| u.clone())
+            .collect::<Vec<ListUnspentResultEntry>>()
+        )
     }
 
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> u32 {
@@ -860,14 +872,14 @@ impl Wallet {
             .unwrap()
             .descriptor;
 
-        let core_wallet_label = self.get_core_wallet_label();
+        let address_label = self.get_core_wallet_label();
         let result = rpc
             .import_multi(
                 &[ImportMultiRequest {
                     timestamp: ImportMultiRescanSince::Now,
                     descriptor: Some(&descriptor),
                     watchonly: Some(true),
-                    label: Some(&core_wallet_label),
+                    label: Some(&address_label),
                     ..Default::default()
                 }],
                 Some(&ImportMultiOptions {
@@ -891,8 +903,16 @@ impl Wallet {
         )
     }
 
-    pub fn import_redeemscript(&self, rpc: &Client, redeemscript: &Script) {
-        let core_wallet_label = self.get_core_wallet_label();
+    pub fn import_redeemscript(
+        &self,
+        rpc: &Client,
+        redeemscript: &Script,
+        address_label_type: CoreAddressLabelType,
+    ) {
+        let address_label = match address_label_type {
+            CoreAddressLabelType::Wallet => self.get_core_wallet_label(),
+            CoreAddressLabelType::WatchOnlySwapCoin => WATCH_ONLY_SWAPCOIN_LABEL.to_string(),
+        };
         let spk = Address::p2wsh(&redeemscript, NETWORK).script_pubkey();
         let result = rpc
             .import_multi(
@@ -901,7 +921,7 @@ impl Wallet {
                     script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
                     redeem_script: Some(redeemscript),
                     watchonly: Some(true),
-                    label: Some(&core_wallet_label),
+                    label: Some(&address_label),
                     ..Default::default()
                 }],
                 Some(&ImportMultiOptions {

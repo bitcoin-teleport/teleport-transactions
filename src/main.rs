@@ -1,10 +1,10 @@
 use std::io;
-use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
-use bitcoin_wallet::mnemonic;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::Amount;
+use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
 use structopt::StructOpt;

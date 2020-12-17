@@ -8,7 +8,7 @@ use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerHello, TakerTo
 #[derive(Debug)]
 pub struct OfferAddress {
     pub offer: Offer,
-    pub socket_address: String, //string for now when its "localhost:port"
+    pub address: String, //string for now when its "localhost:port"
 }
 
 const MAKER_HOSTS: [&str; 2] = ["localhost:6102", "localhost:16102"];
@@ -79,7 +79,7 @@ async fn download_maker_offer(host: &str) -> Option<OfferAddress> {
 
     Some(OfferAddress {
         offer,
-        socket_address: String::from(host),
+        address: String::from(host),
     })
 }
 
