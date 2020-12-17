@@ -167,7 +167,8 @@ In this protocol its always important to as much as possible avoid DOS attack op
 * &#9744; code makers and takers to support multi-hop coinswaps without security
 * &#9744; write more developer documentation
 * &#9744; set up a solution to mirror this repository somewhere else in case github rm's it like they did youtube-dl
-* &#9744; implement and deploy fidelity bonds in joinmarket
+* &#9744; implement and deploy fidelity bonds in joinmarket, to experiment and gain experiance with the concept
+* &#9744; add proper error handling to this project, as right now most of the time it will exit on anything unexpected
 * &#9744; code security. For now watchtowers only in the same process as the main scripts
 * &#9744; code fidelity bonds
 * &#9744; implement coinswap fees and taker paying for miner fees
