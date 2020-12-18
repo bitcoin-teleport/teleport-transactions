@@ -29,7 +29,11 @@ The project is nowhere near usable. The code written so far is published for dev
 
 * Start up Bitcoin Core in regtest mode. Make sure the RPC server is enabled with `server=1` and that rpc username and password are set with `rpcuser=yourrpcusername` and `rpcpassword=yourrpcpassword` in the configuration file.
 
-* Download this git repository. Open the file `src/main.rs` and edit the RPC username and password in the function `get_bitcoin_rpc`. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same function.
+* Configure RPC parameters by setting corresponding environment variables or command-line parameters.
+  >Set RPC URL, username and password by using `--rpc-url`, `--rpc-username` and `--rpc-password` command-line parameters
+  > or set corresponding environment variables (`RPC_URL`, `RPC_USERNAME` and `RPC_PASSWORD`) before running.
+
+* Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the RPC URL parameter.
 
 * Create two teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` twice. Instead of `<wallet-name>`, use something like `maker.teleport` and `taker.teleport`.
 

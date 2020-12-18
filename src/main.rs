@@ -26,15 +26,7 @@ mod messages;
 mod offerbook_sync;
 mod taker_protocol;
 
-fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
-    let rpc = match get_bitcoin_rpc() {
-        Ok(rpc) => rpc,
-        Err(error) => {
-            println!("error connecting to bitcoin node: {:?}", error);
-            return Ok(());
-        }
-    };
-
+fn generate_wallet(wallet_file_name: &PathBuf, rpc: Client) -> std::io::Result<()> {
     println!("input seed phrase extension (or leave blank for none): ");
     let mut extension = String::new();
     io::stdin().read_line(&mut extension)?;
@@ -89,36 +81,11 @@ fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     Ok(())
 }
 
-fn get_bitcoin_rpc() -> Result<Client, Error> {
-    //TODO put all this in a config file
-    let auth = Auth::UserPass(
-        "regtestrpcuser".to_string(),
-        "regtestrpcpass".to_string(),
-        //"btcrpcuser".to_string(),
-        //"btcrpcpass".to_string()
-    );
-    let rpc = Client::new(
-        "http://localhost:18443/wallet/teleport"
-            //"http://localhost:18332/wallet/teleport"
-            .to_string(),
-        auth,
-    )?;
-    rpc.get_blockchain_info()?;
-    Ok(rpc)
-}
-
-fn display_wallet_balance(wallet_file_name: &PathBuf) {
+fn display_wallet_balance(wallet_file_name: &PathBuf, rpc: Client) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
             println!("error loading wallet file: {:?}", error);
-            return;
-        }
-    };
-    let rpc = match get_bitcoin_rpc() {
-        Ok(rpc) => rpc,
-        Err(error) => {
-            println!("error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
@@ -151,18 +118,11 @@ fn display_wallet_balance(wallet_file_name: &PathBuf) {
     println!("total balance = {}", balance);
 }
 
-fn print_receive_invoice(wallet_file_name: &PathBuf) {
+fn print_receive_invoice(wallet_file_name: &PathBuf, rpc: Client) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
             println!("error loading wallet file: {:?}", error);
-            return;
-        }
-    };
-    let rpc = match get_bitcoin_rpc() {
-        Ok(rpc) => rpc,
-        Err(error) => {
-            println!("error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
@@ -172,14 +132,7 @@ fn print_receive_invoice(wallet_file_name: &PathBuf) {
     println!("receive invoice:\n\nbitcoin:{}\n", addr);
 }
 
-fn run_maker(wallet_file_name: &PathBuf, port: u16) {
-    let rpc = match get_bitcoin_rpc() {
-        Ok(rpc) => rpc,
-        Err(error) => {
-            println!("error connecting to bitcoin node: {:?}", error);
-            return;
-        }
-    };
+fn run_maker(wallet_file_name: &PathBuf, port: u16, rpc: Client) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
@@ -194,14 +147,7 @@ fn run_maker(wallet_file_name: &PathBuf, port: u16) {
     maker_protocol::start_maker(rpc_ptr, wallet_ptr, port);
 }
 
-fn run_taker(wallet_file_name: &PathBuf) {
-    let rpc = match get_bitcoin_rpc() {
-        Ok(rpc) => rpc,
-        Err(error) => {
-            println!("error connecting to bitcoin node: {:?}", error);
-            return;
-        }
-    };
+fn run_taker(wallet_file_name: &PathBuf, rpc: Client) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
@@ -220,9 +166,46 @@ struct ArgsWithWalletFile {
     #[structopt(default_value = "wallet.teleport", parse(from_os_str), long)]
     wallet_file_name: PathBuf,
 
+    /// RPC connection settings.
+    #[structopt(flatten)]
+    rpc_config: RpcConfig,
+
     /// Subcommand
     #[structopt(flatten)]
     subcommand: Subcommand,
+}
+
+/// Bitcoin Core's JSON-RPC connection settings.
+#[derive(Debug, StructOpt)]
+struct RpcConfig {
+    /// Node's RPC URL.
+    #[structopt(
+        long,
+        default_value = "http://localhost:18443/wallet/teleport",
+        env = "RPC_URL"
+    )]
+    rpc_url: String,
+
+    /// Node's RPC user name.
+    #[structopt(long, default_value = "regtestrpcuser", env = "RPC_USERNAME")]
+    rpc_username: String,
+
+    /// Node's RPC password.
+    #[structopt(long, default_value = "regtestrpcpass", env = "RPC_PASSWORD")]
+    rpc_password: String,
+}
+
+impl RpcConfig {
+    /// Tries to connect and return a Bitcoin Node's RPC client.
+    fn try_into_client(self) -> Result<Client, Error> {
+        let auth = Auth::UserPass(self.rpc_username, self.rpc_password);
+
+        let rpc = Client::new(self.rpc_url, auth)?;
+
+        rpc.get_blockchain_info()?;
+
+        Ok(rpc)
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -249,30 +232,37 @@ enum Subcommand {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = ArgsWithWalletFile::from_args();
+    let wallet_file_name = &args.wallet_file_name;
+    let rpc_config = args.rpc_config;
 
     match args.subcommand {
         Subcommand::GenerateWallet => {
-            generate_wallet(&args.wallet_file_name)?;
+            let rpc = rpc_config.try_into_client()?;
+            generate_wallet(wallet_file_name, rpc)?;
         }
 
         Subcommand::RecoverWallet => {
-            recover_wallet(&args.wallet_file_name)?;
+            recover_wallet(wallet_file_name)?;
         }
 
         Subcommand::WalletBalance => {
-            display_wallet_balance(&args.wallet_file_name);
+            let rpc = rpc_config.try_into_client()?;
+            display_wallet_balance(wallet_file_name, rpc);
         }
 
         Subcommand::GetReceiveInvoice => {
-            print_receive_invoice(&args.wallet_file_name);
+            let rpc = rpc_config.try_into_client()?;
+            print_receive_invoice(wallet_file_name, rpc);
         }
 
         Subcommand::RunMaker { port } => {
-            run_maker(&args.wallet_file_name, port);
+            let rpc = rpc_config.try_into_client()?;
+            run_maker(wallet_file_name, port, rpc);
         }
 
         Subcommand::CoinswapSend => {
-            run_taker(&args.wallet_file_name);
+            let rpc = rpc_config.try_into_client()?;
+            run_taker(wallet_file_name, rpc);
         }
     }
 
