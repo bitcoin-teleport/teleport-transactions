@@ -1,23 +1,15 @@
 use std::io;
-
 use std::sync::{Arc, RwLock};
+use std::path::PathBuf;
 
-extern crate bitcoin_wallet;
 use bitcoin_wallet::mnemonic;
-
-extern crate bitcoin;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::Amount;
-
-extern crate bitcoincore_rpc;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
 use structopt::StructOpt;
 
-extern crate rand;
-
 mod wallet_sync;
-use std::path::PathBuf;
 use wallet_sync::Wallet;
 
 mod contracts;
