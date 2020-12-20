@@ -173,15 +173,17 @@ In this protocol its always important to as much as possible avoid DOS attack op
 * &#9744; code fidelity bonds
 * &#9744; implement coinswap fees and taker paying for miner fees
 * &#9744; code federated message board seeder servers
-* &#9744; add collateral inputs to receiver contract txes
+* &#9744; RELEASE FOR TESTNET
 * &#9744; add support for miner fees and precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
 * &#9744; automated tests (might be earlier in case its useful in test driven development)
-* &#9744; RELEASE FOR TESTNET AND MAYBE MAINNET
-* &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
-* &#9744; add encrypted wallet files
-* &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to backup these wallets
 * &#9744; move wallet files and config to its own data directory ~/.teleport/
+* &#9744; add collateral inputs to receiver contract txes
+* &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to backup these wallets
 * &#9744; watchtowers in a separate process
+* &#9744; RELEASE FOR MAINNET
+* &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
+* &#9744; implement branching and merging coinswaps for takers, so that they can create coinswaps even if they just have one UTXO
+* &#9744; add encrypted wallet files
 * &#9744; reproducible builds + pin dependencies to a hash
 * &#9744; break as many blockchain analysis heuristics as possible, e.g. change address detection
 * &#9744; payjoin-with-coinswap with decoy UTXOs
