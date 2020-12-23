@@ -113,28 +113,29 @@ Protocol messages are defined by the structs found in `src/messages.rs` and seri
 ```
  | Alice           | Bob             | Charlie         | message name, or (step) if its a repeat
  |=================|=================|=================|
-0. AB/A htlc + p ---->               |                 | sign my senders contract
-1.               <---- AB/A htlc B/2 |                 | your senders contract sig
+0. AB/A htlc + p ---->               |                 | sign senders contract
+1.               <---- AB/A htlc B/2 |                 | senders contract sig
 2.    ***** BROADCAST AND MINE ALICE FUNDING TX *****  |
 3.    A fund + p ---->               |                 | proof of funding
-4.               <----AB/B+BC/B htlc |                 | sign my senders and receivers contract
+4.               <----AB/B+BC/B htlc |                 | sign senders and receivers contract
 5. BC/B htlc + p ---------------------->               | (0)
 6.               <---------------------- BC/B htlc C/2 | (1)
-7. AB/B+BC/B A+C/2--->               |                 | your senders and receivers contract
+7. AB/B+BC/B A+C/2--->               |                 | senders and receivers contract sig
 8.    ***** BROADCAST AND MINE BOB FUNDING TX *****    |
 A.    B fund + p ----------------------->              | (3)
 B.               <-----------------------BC/C+CA/C htlc| (4)
-C. BC/C htlc + p ---->               |                 | sign my receiver contract
-D.               <---- BC/C htlc B/2 |                 | your receiver contract
+C. BC/C htlc + p ---->               |                 | sign receiver contract
+D.               <---- BC/C htlc B/2 |                 | receiver contract sig
 E.BC/C+CA/C B+A/2----------------------->              | (7)
-E.   ***** BROADCAST AND MINE CHARLIE FUNDING TX ***** |
+F.   ***** BROADCAST AND MINE CHARLIE FUNDING TX ***** |
 G. CA/A htlc + p ---------------------->               | (C)
 H.               <---------------------- CA/A htlc C/2 | (D)
 I. hash preimage ---------------------->               | hash preimage
 J. hash preimage ---->               |                 | (I)
-K.                 |    privB(B+C) ---->               | your private key (this struct is in both enums MakerToTakerMessages and TakerToMakerMessages)
+K.               <---- privB(B+C)    |                 | private key (this struct is in both enums MakerToTakerMessages and TakerToMakerMessages)
 L.               <---------------------- privC(C+A)    | (K)
-M.    privA(A+B) ---->               |                 | (K)
+M.    privB(B+C) ---------------------->               | (K)
+N.    privA(A+B) ---->               |                 | (K)
 
 ```
 
