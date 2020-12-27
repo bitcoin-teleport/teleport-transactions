@@ -12,8 +12,7 @@ use tokio::time::sleep;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
-use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::util::key::PublicKey;
+use bitcoin::secp256k1::Signature;
 use bitcoin::{BlockHash, Script, Transaction, Txid};
 use bitcoincore_rpc::{Client, RpcApi};
 
@@ -131,22 +130,20 @@ async fn send_coinswap(
     let swap2_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP;
     let swap3_locktime = REFUND_LOCKTIME;
 
-    let mut maker1_multisig_pubkeys = Vec::<PublicKey>::new();
-    let mut maker1_multisig_key_nonces = Vec::<SecretKey>::new();
-    let mut maker1_hashlock_pubkeys = Vec::<PublicKey>::new();
-    let mut maker1_hashlock_key_nonces = Vec::<SecretKey>::new();
-    for _ in 0..my_tx_count {
-        let (maker1_multisig_pubkey, multisig_key_nonce) = contracts::derive_maker_pubkey_and_nonce(
-            maker_offers_addresses[0].offer.tweakable_point,
-        );
-        maker1_multisig_pubkeys.push(maker1_multisig_pubkey);
-        maker1_multisig_key_nonces.push(multisig_key_nonce);
-        let (maker1_hashlock_pubkey, hashlock_key_nonce) = contracts::derive_maker_pubkey_and_nonce(
-            maker_offers_addresses[0].offer.tweakable_point,
-        );
-        maker1_hashlock_pubkeys.push(maker1_hashlock_pubkey);
-        maker1_hashlock_key_nonces.push(hashlock_key_nonce);
-    }
+    let (maker1_multisig_pubkeys, maker1_multisig_key_nonces): (Vec<_>, Vec<_>) = (0..my_tx_count)
+        .map(|_| {
+            contracts::derive_maker_pubkey_and_nonce(
+                maker_offers_addresses[0].offer.tweakable_point,
+            )
+        })
+        .unzip();
+    let (maker1_hashlock_pubkeys, maker1_hashlock_key_nonces): (Vec<_>, Vec<_>) = (0..my_tx_count)
+        .map(|_| {
+            contracts::derive_maker_pubkey_and_nonce(
+                maker_offers_addresses[0].offer.tweakable_point,
+            )
+        })
+        .unzip();
 
     let (my_funding_txes, mut outgoing_swapcoins, my_timelock_pubkeys, _my_timelock_privkeys) =
         wallet.initalize_coinswap(
@@ -158,7 +155,10 @@ async fn send_coinswap(
             swap1_locktime,
         );
 
-    println!("connecting to maker1 = {}", maker_offers_addresses[0].address);
+    println!(
+        "connecting to maker1 = {}",
+        maker_offers_addresses[0].address
+    );
     let mut socket1 = TcpStream::connect(maker_offers_addresses[0].address.clone()).await?;
     let (mut socket1_reader, mut socket1_writer) = handshake_maker(&mut socket1).await?;
     send_message(
@@ -264,22 +264,22 @@ async fn send_coinswap(
         })
         .collect::<Vec<String>>();
 
-    let mut maker2_multisig_pubkeys = Vec::<PublicKey>::new();
-    let mut maker2_multisig_key_nonces = Vec::<SecretKey>::new();
-    let mut maker2_hashlock_pubkeys = Vec::<PublicKey>::new();
-    let mut maker2_hashlock_key_nonces = Vec::<SecretKey>::new();
-    for _ in 0..my_tx_count {
-        let (maker2_multisig_pubkey, multisig_key_nonce) = contracts::derive_maker_pubkey_and_nonce(
-            maker_offers_addresses[1].offer.tweakable_point,
-        );
-        maker2_multisig_pubkeys.push(maker2_multisig_pubkey);
-        maker2_multisig_key_nonces.push(multisig_key_nonce);
-        let (maker2_hashlock_pubkey, hashlock_key_nonce) = contracts::derive_maker_pubkey_and_nonce(
-            maker_offers_addresses[1].offer.tweakable_point,
-        );
-        maker2_hashlock_pubkeys.push(maker2_hashlock_pubkey);
-        maker2_hashlock_key_nonces.push(hashlock_key_nonce);
-    }
+    let (maker2_multisig_pubkeys, maker2_multisig_key_nonces): (Vec<_>, Vec<_>) = (0
+        ..maker_tx_count)
+        .map(|_| {
+            contracts::derive_maker_pubkey_and_nonce(
+                maker_offers_addresses[1].offer.tweakable_point,
+            )
+        })
+        .unzip();
+    let (maker2_hashlock_pubkeys, maker2_hashlock_key_nonces): (Vec<_>, Vec<_>) = (0
+        ..maker_tx_count)
+        .map(|_| {
+            contracts::derive_maker_pubkey_and_nonce(
+                maker_offers_addresses[1].offer.tweakable_point,
+            )
+        })
+        .unzip();
 
     send_message(
         &mut socket1_writer,
@@ -387,7 +387,10 @@ async fn send_coinswap(
         swap2_contract_redeemscripts.push(expected_next_contract_redeemscript);
     }
 
-    println!("connecting to maker2 = {}", maker_offers_addresses[1].address);
+    println!(
+        "connecting to maker2 = {}",
+        maker_offers_addresses[1].address
+    );
     let mut socket2 = TcpStream::connect(maker_offers_addresses[1].address.clone()).await?;
     let (mut socket2_reader, mut socket2_writer) = handshake_maker(&mut socket2).await?;
     send_message(
@@ -530,20 +533,10 @@ async fn send_coinswap(
         })
         .collect::<Vec<String>>();
 
-    //TODO surely this somewhat ugly vec::new() and forloop can be replaced with iterables
-    // perhaps using unzip()
-    let mut my_receiving_multisig_pubkeys = Vec::<PublicKey>::new();
-    let mut my_receiving_multisig_privkeys = Vec::<SecretKey>::new();
-    let mut my_receiving_hashlock_pubkeys = Vec::<PublicKey>::new();
-    let mut my_receiving_hashlock_privkeys = Vec::<SecretKey>::new();
-    for _ in 0..maker_tx_count {
-        let (my_receiving_multisig_pubkey, my_receiving_multisig_privkey) = generate_keypair();
-        let (my_receiving_hashlock_pubkey, my_receiving_hashlock_privkey) = generate_keypair();
-        my_receiving_multisig_pubkeys.push(my_receiving_multisig_pubkey);
-        my_receiving_multisig_privkeys.push(my_receiving_multisig_privkey);
-        my_receiving_hashlock_pubkeys.push(my_receiving_hashlock_pubkey);
-        my_receiving_hashlock_privkeys.push(my_receiving_hashlock_privkey);
-    }
+    let (my_receiving_multisig_pubkeys, my_receiving_multisig_privkeys): (Vec<_>, Vec<_>) =
+        (0..maker_tx_count).map(|_| generate_keypair()).unzip();
+    let (my_receiving_hashlock_pubkeys, _my_receiving_hashlock_privkeys): (Vec<_>, Vec<_>) =
+        (0..maker_tx_count).map(|_| generate_keypair()).unzip();
 
     send_message(
         &mut socket2_writer,

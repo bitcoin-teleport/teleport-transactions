@@ -40,7 +40,7 @@ use bitcoin::{
 extern crate bitcoincore_rpc;
 use bitcoincore_rpc::json::{
     ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
-    ListUnspentResultEntry, WalletCreateFundedPsbtOptions
+    ListUnspentResultEntry, WalletCreateFundedPsbtOptions,
 };
 use bitcoincore_rpc::{Client, RpcApi};
 
@@ -542,12 +542,12 @@ impl Wallet {
     ) -> bitcoincore_rpc::Result<Vec<ListUnspentResultEntry>> {
         let address_label = self.get_core_wallet_label();
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
-        Ok(rpc.list_unspent(None, None, None, None, None)?
+        Ok(rpc
+            .list_unspent(None, None, None, None, None)?
             .iter()
             .filter(|u| !self.is_utxo_not_ours(u, &address_label))
             .map(|u| u.clone())
-            .collect::<Vec<ListUnspentResultEntry>>()
-        )
+            .collect::<Vec<ListUnspentResultEntry>>())
     }
 
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> u32 {
