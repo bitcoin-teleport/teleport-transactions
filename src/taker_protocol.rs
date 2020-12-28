@@ -941,7 +941,12 @@ async fn send_coinswap(
     for outgoing_swapcoin in outgoing_swapcoins {
         wallet.add_swapcoin(outgoing_swapcoin).unwrap();
     }
-    println!("successfully completed coinswap");
 
+    println!("my funding txes = {:#?}",
+        my_funding_txes.iter().map(|t| t.txid()).collect::<Vec<_>>());
+    println!("maker1 funding txes = {:#?}", maker1s_funding_txids);
+    println!("maker2 funding txes = {:#?}", maker2s_funding_txids);
+
+    println!("successfully completed coinswap");
     Ok(())
 }
