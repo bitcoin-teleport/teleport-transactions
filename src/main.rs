@@ -116,7 +116,8 @@ fn display_wallet_balance(wallet_file_name: &PathBuf) {
     };
     wallet.startup_sync(&rpc);
 
-    let utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
+    let mut utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
+    utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
     let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
     println!(
