@@ -349,15 +349,6 @@ async fn send_coinswap(
         )
         .unwrap(); //TODO make it not just crash if invalid contract tx
     }
-    let swap1_receivers_sigs = maker1_sign_sender_and_receiver_contracts
-        .receivers_contract_txes
-        .iter()
-        .zip(outgoing_swapcoins.iter())
-        .map(|(receivers_contract_tx, outgoing_swapcoin)| {
-            outgoing_swapcoin.sign_contract_tx_with_my_privkey(receivers_contract_tx)
-        })
-        .collect::<Vec<Signature>>();
-
     if maker2_multisig_pubkeys.len()
         != maker1_sign_sender_and_receiver_contracts
             .senders_contract_txes_info
@@ -481,7 +472,14 @@ async fn send_coinswap(
     send_message(
         &mut socket1_writer,
         TakerToMakerMessage::SendersAndReceiversContractSigs(SendersAndReceiversContractSigs {
-            receivers_sigs: swap1_receivers_sigs,
+            receivers_sigs: maker1_sign_sender_and_receiver_contracts
+                .receivers_contract_txes
+                .iter()
+                .zip(outgoing_swapcoins.iter())
+                .map(|(receivers_contract_tx, outgoing_swapcoin)| {
+                    outgoing_swapcoin.sign_contract_tx_with_my_privkey(receivers_contract_tx)
+                })
+                .collect::<Vec<Signature>>(),
             senders_sigs: maker2_senders_contract_sig.sigs,
         }),
     )
