@@ -118,7 +118,7 @@ pub struct MakerHello {
     pub protocol_version_max: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Offer {
     pub absolute_fee: u32,
     pub amount_relative_fee: f32,

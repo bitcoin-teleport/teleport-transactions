@@ -5,13 +5,18 @@ use tokio::sync::mpsc;
 
 use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerHello, TakerToMakerMessage};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OfferAddress {
     pub offer: Offer,
     pub address: String, //string for now when its "localhost:port"
 }
 
-const MAKER_HOSTS: [&str; 2] = ["localhost:6102", "localhost:16102"];
+const MAKER_HOSTS: [&str; 4] = [
+    "localhost:6102",
+    "localhost:16102",
+    "localhost:26102",
+    "localhost:36102",
+];
 
 fn parse_message(line: &str) -> Option<MakerToTakerMessage> {
     let message: MakerToTakerMessage = match serde_json::from_str(line) {

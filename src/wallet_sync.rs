@@ -72,7 +72,7 @@ struct WalletFileData {
     seedphrase: String,
     extension: String,
     external_index: u32,
-    swap_coins: Vec<SwapCoin>,
+    swap_coins: Vec<WalletSwapCoin>,
     prevout_to_contract_map: HashMap<OutPoint, Script>,
 }
 
@@ -80,7 +80,7 @@ pub struct Wallet {
     master_key: ExtendedPrivKey,
     wallet_file_name: String,
     external_index: u32,
-    swap_coins: HashMap<Script, SwapCoin>,
+    swap_coins: HashMap<Script, WalletSwapCoin>,
 }
 
 pub enum CoreAddressLabelType {
@@ -92,7 +92,7 @@ const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
 //they are made in the process of a coinswap
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct SwapCoin {
+pub struct WalletSwapCoin {
     pub my_privkey: SecretKey,
     pub other_pubkey: PublicKey,
     pub other_privkey: Option<SecretKey>,
@@ -103,15 +103,15 @@ pub struct SwapCoin {
     pub hash_preimage: Option<[u8; 32]>,
 }
 
-impl SwapCoin {
+impl WalletSwapCoin {
     pub fn new(
         my_privkey: SecretKey,
         other_pubkey: PublicKey,
         contract_tx: Transaction,
         contract_redeemscript: Script,
         funding_amount: u64,
-    ) -> SwapCoin {
-        SwapCoin {
+    ) -> WalletSwapCoin {
+        WalletSwapCoin {
             my_privkey,
             other_pubkey,
             other_privkey: None,
@@ -175,15 +175,22 @@ impl SwapCoin {
 }
 
 impl Wallet {
-
     pub fn print_wallet_key_data(&self) {
-        println!("master key = {}, external_index = {}", self.master_key, self.external_index);
+        println!(
+            "master key = {}, external_index = {}",
+            self.master_key, self.external_index
+        );
         for (multisig_redeemscript, swapcoin) in &self.swap_coins {
-            println!("{} {}:{} {}",
+            println!(
+                "{} {}:{} {}",
                 Address::p2wsh(multisig_redeemscript, NETWORK),
                 swapcoin.contract_tx.input[0].previous_output.txid,
                 swapcoin.contract_tx.input[0].previous_output.vout,
-                if swapcoin.other_privkey.is_some() {"  known"} else {"unknown"}
+                if swapcoin.other_privkey.is_some() {
+                    "  known"
+                } else {
+                    "unknown"
+                }
             )
         }
         println!("swapcoin count = {}", self.swap_coins.len());
@@ -241,7 +248,7 @@ impl Wallet {
                 .swap_coins
                 .iter()
                 .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
-                .collect::<HashMap<Script, SwapCoin>>(),
+                .collect::<HashMap<Script, WalletSwapCoin>>(),
         };
         Ok(wallet)
     }
@@ -257,21 +264,28 @@ impl Wallet {
 
     pub fn update_swap_coins_list(&self) -> io::Result<()> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
-        wallet_file_data.swap_coins = self.swap_coins.values().cloned().collect::<Vec<SwapCoin>>();
+        wallet_file_data.swap_coins = self
+            .swap_coins
+            .values()
+            .cloned()
+            .collect::<Vec<WalletSwapCoin>>();
         let wallet_file = File::create(&self.wallet_file_name[..])?;
         serde_json::to_writer(wallet_file, &wallet_file_data)?;
         Ok(())
     }
 
-    pub fn find_swapcoin(&self, multisig_redeemscript: &Script) -> Option<&SwapCoin> {
+    pub fn find_swapcoin(&self, multisig_redeemscript: &Script) -> Option<&WalletSwapCoin> {
         self.swap_coins.get(multisig_redeemscript)
     }
 
-    pub fn find_swapcoin_mut(&mut self, multisig_redeemscript: &Script) -> Option<&mut SwapCoin> {
+    pub fn find_swapcoin_mut(
+        &mut self,
+        multisig_redeemscript: &Script,
+    ) -> Option<&mut WalletSwapCoin> {
         self.swap_coins.get_mut(multisig_redeemscript)
     }
 
-    pub fn add_swapcoin(&mut self, coin: SwapCoin) -> Result<(), &'static str> {
+    pub fn add_swapcoin(&mut self, coin: WalletSwapCoin) -> Result<(), &'static str> {
         self.swap_coins
             .insert(coin.get_multisig_redeemscript(), coin);
         match self.update_swap_coins_list() {
@@ -359,8 +373,7 @@ impl Wallet {
 
     fn is_swapcoin_descriptor_imported(&self, rpc: &Client, descriptor: &str) -> bool {
         let addr = rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
-        rpc
-            .call::<serde_json::Value>("getaddressinfo", &[Value::String(addr.to_string())])
+        rpc.call::<serde_json::Value>("getaddressinfo", &[Value::String(addr.to_string())])
             .unwrap()["iswatchonly"]
             .as_bool()
             .unwrap()
@@ -449,8 +462,16 @@ impl Wallet {
             .filter(|d| !self.is_xpub_descriptor_imported(rpc, &d))
             .collect::<Vec<&String>>();
 
-        let swapcoin_descriptors_to_import = self.swap_coins.values()
-            .map(|sc| format!("wsh(sortedmulti(2,{},{}))", sc.other_pubkey, sc.get_my_pubkey()))
+        let swapcoin_descriptors_to_import = self
+            .swap_coins
+            .values()
+            .map(|sc| {
+                format!(
+                    "wsh(sortedmulti(2,{},{}))",
+                    sc.other_pubkey,
+                    sc.get_my_pubkey()
+                )
+            })
             .map(|d| rpc.get_descriptor_info(&d).unwrap().descriptor)
             .filter(|d| !self.is_swapcoin_descriptor_imported(rpc, &d))
             .collect::<Vec<String>>();
@@ -460,8 +481,11 @@ impl Wallet {
         }
 
         println!("new wallet detected, synchronizing balance...");
-        self.import_initial_addresses(rpc, &hd_descriptors_to_import,
-            &swapcoin_descriptors_to_import);
+        self.import_initial_addresses(
+            rpc,
+            &hd_descriptors_to_import,
+            &swapcoin_descriptors_to_import,
+        );
 
         rpc.call::<Value>("scantxoutset", &[json!("abort")])
             .unwrap();
@@ -472,11 +496,7 @@ impl Wallet {
                 {"desc": d,
                 "range": INITIAL_ADDRESS_IMPORT_COUNT-1})
             })
-            .chain(
-                swapcoin_descriptors_to_import
-                    .iter()
-                    .map(|d| json!(d))
-            )
+            .chain(swapcoin_descriptors_to_import.iter().map(|d| json!(d)))
             .collect::<Vec<Value>>();
 
         let scantxoutset_result: Result<Value, bitcoincore_rpc::Error> =
@@ -988,7 +1008,7 @@ impl Wallet {
         locktime: i64, //returns: funding_tx, swapcoin, timelock_pubkey, timelock_privkey
     ) -> (
         Vec<Transaction>,
-        Vec<SwapCoin>,
+        Vec<WalletSwapCoin>,
         Vec<PublicKey>,
         Vec<SecretKey>,
     ) {
@@ -1006,8 +1026,7 @@ impl Wallet {
 
         let mut timelock_pubkeys = Vec::<PublicKey>::new();
         let mut timelock_privkeys = Vec::<SecretKey>::new();
-        let mut contract_redeemscripts = Vec::<Script>::new();
-        let mut outgoing_swapcoins = Vec::<SwapCoin>::new();
+        let mut outgoing_swapcoins = Vec::<WalletSwapCoin>::new();
 
         for (
             my_funding_tx,
@@ -1025,28 +1044,28 @@ impl Wallet {
             funding_amounts.iter()
         ) {
             let (timelock_pubkey, timelock_privkey) = generate_keypair();
-            contract_redeemscripts.push(contracts::create_contract_redeemscript(
+            let contract_redeemscript = contracts::create_contract_redeemscript(
                 hashlock_pubkey,
                 &timelock_pubkey,
                 hashvalue,
                 locktime,
-            ));
+            );
             let my_senders_contract_tx = contracts::create_senders_contract_tx(
                 OutPoint {
                     txid: my_funding_tx.txid(),
                     vout: *utxo_index,
                 },
                 funding_amount,
-                &contract_redeemscripts.last().unwrap(),
+                &contract_redeemscript,
             );
 
             timelock_pubkeys.push(timelock_pubkey);
             timelock_privkeys.push(timelock_privkey);
-            outgoing_swapcoins.push(SwapCoin::new(
+            outgoing_swapcoins.push(WalletSwapCoin::new(
                 my_multisig_privkey,
                 other_multisig_pubkey,
                 my_senders_contract_tx,
-                contract_redeemscripts.last().unwrap().clone(),
+                contract_redeemscript,
                 funding_amount,
             ));
         }

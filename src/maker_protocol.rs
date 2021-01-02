@@ -21,9 +21,10 @@ use crate::messages::{
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
-use crate::wallet_sync::{CoreAddressLabelType, SwapCoin, Wallet};
+use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
 
 use crate::contracts;
+use crate::contracts::SwapCoin;
 use crate::contracts::{find_funding_output, read_hashvalue_from_contract};
 
 //TODO
@@ -53,8 +54,8 @@ struct ConnectionState {
     //None means that the taker connection is open to doing a number of things
     //listed in the NEWLY_CONNECTED_TAKER_... const
     allowed_method: Option<&'static str>,
-    incoming_swapcoins: Option<Vec<SwapCoin>>,
-    outgoing_swapcoins: Option<Vec<SwapCoin>>,
+    incoming_swapcoins: Option<Vec<WalletSwapCoin>>,
+    outgoing_swapcoins: Option<Vec<WalletSwapCoin>>,
     pending_funding_txes: Option<Vec<Transaction>>,
 }
 
@@ -139,7 +140,7 @@ fn handle_message(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
 ) -> Result<Option<Vec<u8>>, &'static str> {
-    println!("<== {}", line);
+    //println!("<== {}", line);
 
     let request_json: Value = match serde_json::from_str(&line) {
         Ok(r) => r,
@@ -163,7 +164,7 @@ fn handle_message(
         Ok(r) => r,
         Err(_e) => return Err("message parsing error"),
     };
-    //println!("<== {:?}", request);
+    println!("<== {:?}", request);
     let outgoing_message = match request {
         TakerToMakerMessage::TakerHello(_message) => {
             connection_state.allowed_method = None;
@@ -302,7 +303,7 @@ fn handle_proof_of_funding(
 
     println!("proof of funding valid, creating own funding txes");
 
-    connection_state.incoming_swapcoins = Some(Vec::<SwapCoin>::new());
+    connection_state.incoming_swapcoins = Some(Vec::<WalletSwapCoin>::new());
     for (funding_info, &funding_output_index, &funding_output, &incoming_swapcoin_keys) in izip!(
         proof.confirmed_funding_txes.iter(),
         funding_output_indexes.iter(),
@@ -337,7 +338,7 @@ fn handle_proof_of_funding(
             .incoming_swapcoins
             .as_mut()
             .unwrap()
-            .push(SwapCoin::new(
+            .push(WalletSwapCoin::new(
                 coin_privkey,
                 coin_other_pubkey,
                 my_receivers_contract_tx.clone(),
@@ -541,6 +542,7 @@ fn handle_hash_preimage(
             key: outgoing_swapcoin.my_privkey,
         });
     }
+
     wallet_ref.update_swap_coins_list().unwrap();
     Ok(Some(MakerToTakerMessage::PrivateKeyHandover(
         PrivateKeyHandover {
@@ -555,19 +557,19 @@ fn handle_private_key_handover(
 ) -> Result<Option<MakerToTakerMessage>, &'static str> {
     let mut wallet_ref = wallet.write().unwrap();
 
-    let result_add = message
+    let apply_privkey_result = message
         .swapcoin_private_keys
         .iter()
         .map(|swapcoin_private_key| {
             Ok(wallet_ref
                 .find_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
                 .ok_or("multisig_redeemscript not found")?
-                .add_other_privkey(swapcoin_private_key.key)?)
+                .apply_privkey(swapcoin_private_key.key)?)
         })
         .collect::<Vec<Result<(), &'static str>>>();
 
     wallet_ref.update_swap_coins_list().unwrap();
-    if let Some(re) = result_add.iter().find(|r| r.is_err()) {
+    if let Some(re) = apply_privkey_result.iter().find(|r| r.is_err()) {
         return Err(re.unwrap_err());
     }
     println!("successfully completed coinswap");

@@ -20,14 +20,14 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::messages::ConfirmedCoinSwapTxInfo;
-use crate::wallet_sync::{create_multisig_redeemscript, SwapCoin, Wallet, NETWORK};
+use crate::wallet_sync::{create_multisig_redeemscript, Wallet, WalletSwapCoin, NETWORK};
 
 //TODO should be configurable somehow
 //relatively low value for now so that its easier to test on regtest
-pub const REFUND_LOCKTIME: i64 = 80; //in blocks
-pub const REFUND_LOCKTIME_STEP: i64 = 20; //in blocks
+pub const REFUND_LOCKTIME: i64 = 30; //in blocks
+pub const REFUND_LOCKTIME_STEP: i64 = 5; //in blocks
 
-//like the SwapCoin struct but no privkey or signature information
+//like the WalletSwapCoin struct but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
 #[derive(Debug, Clone)]
 pub struct WatchOnlySwapCoin {
@@ -36,6 +36,16 @@ pub struct WatchOnlySwapCoin {
     pub contract_tx: Transaction,
     pub contract_redeemscript: Script,
     pub funding_amount: u64,
+}
+
+pub trait SwapCoin {
+    fn get_multisig_redeemscript(&self) -> Script;
+    fn get_contract_tx(&self) -> Transaction;
+    fn get_contract_redeemscript(&self) -> Script;
+    fn get_funding_amount(&self) -> u64;
+    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
+    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str>;
 }
 
 pub fn calculate_maker_pubkey_from_nonce(
@@ -158,7 +168,7 @@ fn is_contract_out_valid(
     hashvalue: [u8; 20],
     locktime: i64,
 ) -> Result<(), &'static str> {
-    let minimum_locktime = 50; //TODO should be in config file or something
+    let minimum_locktime = 2; //TODO should be in config file or something
     if minimum_locktime > locktime {
         return Err("locktime too short");
     }
@@ -268,10 +278,12 @@ pub fn verify_proof_of_funding(
         rpc.get_tx_out(&funding_info.funding_tx.txid(), funding_output_index, None)?
     {
         if txout.confirmations < 1 {
+            println!("not confirmed");
             return Ok(None);
         }
     } else {
         //output doesnt exist
+        println!("output doesnt exist");
         return Ok(None);
     }
 
@@ -282,11 +294,13 @@ pub fn verify_proof_of_funding(
     let template_ms_rs =
         create_multisig_redeemscript(&pubkey_placeholder, &pubkey_placeholder).into_bytes();
     if ms_rs_bytes.len() != template_ms_rs.len() {
+        println!("wrong rs length");
         return Ok(None);
     }
     ms_rs_bytes.splice(2..35, PUB_PLACEHOLDER.iter().cloned());
     ms_rs_bytes.splice(36..69, PUB_PLACEHOLDER.iter().cloned());
     if ms_rs_bytes != template_ms_rs {
+        println!("rs template not matching");
         return Ok(None);
     }
 
@@ -297,6 +311,7 @@ pub fn verify_proof_of_funding(
     let my_pubkey =
         calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.multisig_key_nonce);
     if pubkey1 != my_pubkey && pubkey2 != my_pubkey {
+        println!("wrong pubkeys");
         return Ok(None);
     }
 
@@ -306,8 +321,12 @@ pub fn verify_proof_of_funding(
     //this is the time the maker or his watchtowers have to be online, read
     // the hash preimage from the blockchain and broadcast their own tx
     //TODO put this in a config file perhaps, and have it advertised to takers
-    const CONTRACT_REACT_TIME: i64 = 144;
+    const CONTRACT_REACT_TIME: i64 = 3;
     if locktime - next_locktime < CONTRACT_REACT_TIME {
+        println!(
+            "locktime too short, locktime={} next_locktime={}",
+            locktime, next_locktime
+        );
         return Ok(None);
     }
 
@@ -323,6 +342,7 @@ pub fn verify_proof_of_funding(
     ) {
         Ok(valid_from_cache) if !valid_from_cache => {
             //provided contract does not match sender contract tx, rejecting
+            println!("provided contract does not match sender contract tx, rejecting");
             return Ok(None);
         }
         Err(_e) => {
@@ -414,8 +434,8 @@ fn verify_contract_tx_sig(
     secp.verify(&sighash, sig, &pubkey.key).is_ok()
 }
 
-impl SwapCoin {
-    pub fn get_multisig_redeemscript(&self) -> Script {
+impl SwapCoin for WalletSwapCoin {
+    fn get_multisig_redeemscript(&self) -> Script {
         let secp = Secp256k1::new();
         create_multisig_redeemscript(
             &self.other_pubkey,
@@ -426,6 +446,41 @@ impl SwapCoin {
         )
     }
 
+    fn get_contract_tx(&self) -> Transaction {
+        self.contract_tx.clone()
+    }
+
+    fn get_contract_redeemscript(&self) -> Script {
+        self.contract_redeemscript.clone()
+    }
+
+    fn get_funding_amount(&self) -> u64 {
+        self.funding_amount
+    }
+
+    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
+        self.verify_contract_tx_sig(sig)
+    }
+
+    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
+        self.verify_contract_tx_sig(sig)
+    }
+
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str> {
+        let secp = Secp256k1::new();
+        let pubkey = PublicKey {
+            compressed: true,
+            key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
+        };
+        if pubkey != self.other_pubkey {
+            return Err("not correct privkey");
+        }
+        self.other_privkey = Some(privkey);
+        Ok(())
+    }
+}
+
+impl WalletSwapCoin {
     //"_with_my_privkey" as opposed to with other_privkey
     pub fn sign_contract_tx_with_my_privkey(&self, contract_tx: &Transaction) -> Signature {
         let multisig_redeemscript = self.get_multisig_redeemscript();
@@ -446,18 +501,59 @@ impl SwapCoin {
             sig,
         )
     }
+}
 
-    pub fn add_other_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str> {
+impl SwapCoin for WatchOnlySwapCoin {
+    fn get_multisig_redeemscript(&self) -> Script {
+        create_multisig_redeemscript(&self.sender_pubkey, &self.receiver_pubkey)
+    }
+
+    fn get_contract_tx(&self) -> Transaction {
+        self.contract_tx.clone()
+    }
+
+    fn get_contract_redeemscript(&self) -> Script {
+        self.contract_redeemscript.clone()
+    }
+
+    fn get_funding_amount(&self) -> u64 {
+        self.funding_amount
+    }
+
+    //potential confusion here:
+    //verify sender sig uses the receiver_pubkey
+    //verify receiver sig uses the sender_pubkey
+    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
+        verify_contract_tx_sig(
+            &self.contract_tx,
+            &self.get_multisig_redeemscript(),
+            self.funding_amount,
+            &self.receiver_pubkey,
+            sig,
+        )
+    }
+
+    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
+        verify_contract_tx_sig(
+            &self.contract_tx,
+            &self.get_multisig_redeemscript(),
+            self.funding_amount,
+            &self.sender_pubkey,
+            sig,
+        )
+    }
+
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
             key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
         };
-        if pubkey != self.other_pubkey {
-            return Err("not correct privkey");
+        if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
+            Ok(())
+        } else {
+            Err("privkey invalid")
         }
-        self.other_privkey = Some(privkey);
-        Ok(())
     }
 }
 
@@ -485,38 +581,5 @@ impl WatchOnlySwapCoin {
             contract_redeemscript,
             funding_amount,
         })
-    }
-
-    pub fn get_multisig_redeemscript(&self) -> Script {
-        create_multisig_redeemscript(&self.sender_pubkey, &self.receiver_pubkey)
-    }
-
-    pub fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
-        verify_contract_tx_sig(
-            &self.contract_tx,
-            &self.get_multisig_redeemscript(),
-            self.funding_amount,
-            &self.sender_pubkey,
-            sig,
-        )
-    }
-
-    pub fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
-        verify_contract_tx_sig(
-            &self.contract_tx,
-            &self.get_multisig_redeemscript(),
-            self.funding_amount,
-            &self.receiver_pubkey,
-            sig,
-        )
-    }
-
-    pub fn is_other_privkey_valid(&self, privkey: SecretKey) -> bool {
-        let secp = Secp256k1::new();
-        let pubkey = PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
-        };
-        pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey
     }
 }
