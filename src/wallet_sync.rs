@@ -24,7 +24,6 @@ use bitcoin::{
     },
     hashes::{
         hex::{FromHex, ToHex},
-        {hash160, Hash},
     },
     secp256k1,
     secp256k1::{Secp256k1, SecretKey, Signature},
@@ -709,13 +708,7 @@ impl Wallet {
 
                 let input_value =
                     convert_json_rpc_bitcoin_to_satoshis(&input_info["witness_utxo"]["amount"]);
-                let scriptcode = Builder::new()
-                    .push_opcode(all::OP_DUP)
-                    .push_opcode(all::OP_HASH160)
-                    .push_slice(&hash160::Hash::hash(pubkey.to_bytes().as_slice())[..])
-                    .push_opcode(all::OP_EQUALVERIFY)
-                    .push_opcode(all::OP_CHECKSIG)
-                    .into_script();
+                let scriptcode = Script::new_p2pkh(&pubkey.pubkey_hash());
                 let sighash = SigHashCache::new(&tx_clone).signature_hash(
                     ix,
                     &scriptcode,
