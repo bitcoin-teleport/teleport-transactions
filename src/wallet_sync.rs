@@ -744,8 +744,15 @@ impl Wallet {
         .collect::<Vec<u64>>();
 
         //rounding errors mean usually 1 or 2 satoshis are lost, add them back
-        let remainder = coinswap_amount - output_values.iter().sum::<u64>();
-        *output_values.last_mut().unwrap() = output_values.last().unwrap() + remainder;
+
+        //this calculation works like this:
+        //o = [a, b, c, ...]             | list of output values
+        //t = coinswap amount            | total desired value
+        //a <-- a + (t - (a+b+c+...))    | assign new first output value
+        //a <-- a + (t -a-b-c-...)       | rearrange
+        //a <-- t - b - c -...           |
+        *output_values.first_mut().unwrap() = coinswap_amount
+            - output_values.iter().skip(1).sum::<u64>();
         assert_eq!(output_values.iter().sum::<u64>(), coinswap_amount);
 
         let mut spending_txes = Vec::<Transaction>::new();
