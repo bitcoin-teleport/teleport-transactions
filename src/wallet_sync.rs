@@ -844,13 +844,7 @@ impl Wallet {
         rpc: &Client,
         other_pubkey: &PublicKey,
     ) -> (Address, SecretKey) {
-        let mut my_privkey_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut my_privkey_bytes);
-        //let my_privkey_bytes = [0xbb; 32];
-
-        let secp = Secp256k1::new();
-        let my_privkey = secp256k1::SecretKey::from_slice(&my_privkey_bytes).unwrap();
-        let my_pubkey = secp256k1::PublicKey::from_secret_key(&secp, &my_privkey);
+        let (my_pubkey, my_privkey) = generate_keypair();
 
         let descriptor = rpc
             .get_descriptor_info(&format!(
