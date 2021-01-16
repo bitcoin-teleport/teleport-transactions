@@ -1,3 +1,4 @@
+use dirs::home_dir;
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -83,12 +84,20 @@ fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
 
 fn get_bitcoin_rpc() -> Result<Client, Error> {
     //TODO put all this in a config file
-    let auth = Auth::UserPass(
-        "regtestrpcuser".to_string(),
-        "regtestrpcpass".to_string(),
-        //"btcrpcuser".to_string(),
-        //"btcrpcpass".to_string()
-    );
+    const RPC_CREDENTIALS: Option<(&str, &str)> =
+        Some(("regtestrpcuser", "regtestrpcpass"));
+        //Some(("btcrpcuser", "btcrpcpass"));
+        //None; // use Bitcoin Core cookie-based authentication
+
+    let auth = match RPC_CREDENTIALS {
+        Some((user, pass)) => Auth::UserPass(user.to_string(), pass.to_string()),
+        None => {
+            //TODO this currently only works for Linux and regtest,
+            //     also support other OSes (Windows, MacOS...) and networks
+            let data_dir = home_dir().unwrap().join(".bitcoin");
+            Auth::CookieFile(data_dir.join("regtest").join(".cookie"))
+        },
+    };
     let rpc = Client::new(
         "http://localhost:18443/wallet/teleport"
             //"http://localhost:18332/wallet/teleport"
