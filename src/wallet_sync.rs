@@ -499,16 +499,30 @@ impl Wallet {
         self.update_external_index(max_external_index).unwrap();
     }
 
-    fn is_utxo_not_ours(&self, u: &ListUnspentResultEntry, address_label: &String) -> bool {
-        u.label.as_ref().unwrap_or(&String::new()) != address_label
-            || u.witness_script.is_some()
-                && self
-                    .find_swapcoin(
-                        u.witness_script
-                            .as_ref()
-                            .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
-                    )
-                    .map_or(true, |sc| sc.other_privkey.is_none())
+    fn is_utxo_ours(&self, u: &ListUnspentResultEntry) -> bool {
+        if u.descriptor.is_none() {
+            return false;
+        }
+        let descriptor = u.descriptor.as_ref().unwrap();
+        if let Some(ret) = self.get_hd_path_from_descriptor(&descriptor) {
+            //utxo is in a hd wallet
+            let (fingerprint, _, _) = ret;
+
+            let secp = Secp256k1::new();
+            let master_private_key = self
+                .master_key
+                .derive_priv(&secp, &DerivationPath::from_str(DERIVATION_PATH).unwrap())
+                .unwrap();
+            fingerprint == master_private_key.fingerprint(&secp).to_string()
+        } else {
+            //utxo might be one of our swapcoins
+            self.find_swapcoin(
+                u.witness_script
+                    .as_ref()
+                    .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
+            )
+            .map_or(false, |sc| sc.other_privkey.is_some())
+        }
     }
 
     pub fn lock_all_nonwallet_unspents(&self, rpc: &Client) -> bitcoincore_rpc::Result<()> {
@@ -516,11 +530,10 @@ impl Wallet {
         //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
 
-        let address_label = self.get_core_wallet_label();
         let all_unspents = rpc.list_unspent(None, None, None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
-            .filter(|u| self.is_utxo_not_ours(u, &address_label))
+            .filter(|u| !self.is_utxo_ours(u))
             .map(|u| OutPoint {
                 txid: u.txid,
                 vout: u.vout,
@@ -534,14 +547,41 @@ impl Wallet {
         &self,
         rpc: &Client,
     ) -> bitcoincore_rpc::Result<Vec<ListUnspentResultEntry>> {
-        let address_label = self.get_core_wallet_label();
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
         Ok(rpc
             .list_unspent(None, None, None, None, None)?
             .iter()
-            .filter(|u| !self.is_utxo_not_ours(u, &address_label))
+            .filter(|u| self.is_utxo_ours(u))
             .map(|u| u.clone())
             .collect::<Vec<ListUnspentResultEntry>>())
+    }
+
+    // returns None if not a hd descriptor (but possibly a swapcoin (multisig) descriptor instead)
+    fn get_hd_path_from_descriptor<'a>(&self, descriptor: &'a str) -> Option<(&'a str, u32, i32)> {
+        //e.g
+        //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
+        let open = descriptor.find('[');
+        let close = descriptor.find(']');
+        if open.is_none() || close.is_none() {
+            println!("unknown descriptor = {}", descriptor);
+            return None;
+        }
+        let path = &descriptor[open.unwrap() + 1..close.unwrap()];
+        let path_chunks: Vec<&str> = path.split('/').collect();
+        if path_chunks.len() != 3 {
+            return None;
+            //unexpected descriptor = wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q
+        }
+        let addr_type = path_chunks[1].parse::<u32>();
+        if addr_type.is_err() {
+            println!("unexpected address_type = {}", path);
+            return None;
+        }
+        let index = path_chunks[2].parse::<i32>();
+        if index.is_err() {
+            return None;
+        }
+        return Some((path_chunks[0], addr_type.unwrap(), index.unwrap()));
     }
 
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> u32 {
@@ -552,34 +592,16 @@ impl Wallet {
             if utxo.descriptor.is_none() {
                 continue;
             }
-            //e.g
-            //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
-            let desc = utxo.descriptor.unwrap();
-            let open = desc.find('[');
-            let close = desc.find(']');
-            if open.is_none() || close.is_none() {
-                println!("unknown descriptor = {}", desc);
+            let descriptor = utxo.descriptor.unwrap();
+            let ret = self.get_hd_path_from_descriptor(&descriptor);
+            if ret.is_none() {
                 continue;
             }
-            let path = &desc[open.unwrap() + 1..close.unwrap()];
-            let path_chunks: Vec<&str> = path.split('/').collect();
-            if path_chunks.len() != 3 {
-                continue;
-                //unexpected descriptor = wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q
-            }
-            let addr_type = path_chunks[1].parse::<u32>();
-            if addr_type.is_err() {
-                println!("unexpected address_type = {}", path);
+            let (_, addr_type, index) = ret.unwrap();
+            if addr_type != address_type {
                 continue;
             }
-            if addr_type.unwrap() != address_type {
-                continue;
-            }
-            let index = path_chunks[2].parse::<i32>();
-            if index.is_err() {
-                continue;
-            }
-            max_index = std::cmp::max(max_index, index.unwrap());
+            max_index = std::cmp::max(max_index, index);
         }
         (max_index + 1) as u32
     }
