@@ -175,6 +175,20 @@ impl SwapCoin {
 }
 
 impl Wallet {
+
+    pub fn print_wallet_key_data(&self) {
+        println!("master key = {}, external_index = {}", self.master_key, self.external_index);
+        for (multisig_redeemscript, swapcoin) in &self.swap_coins {
+            println!("{} {}:{} {}",
+                Address::p2wsh(multisig_redeemscript, NETWORK),
+                swapcoin.contract_tx.input[0].previous_output.txid,
+                swapcoin.contract_tx.input[0].previous_output.vout,
+                if swapcoin.other_privkey.is_some() {"  known"} else {"unknown"}
+            )
+        }
+        println!("swapcoin count = {}", self.swap_coins.len());
+    }
+
     pub fn save_new_wallet_file<P: AsRef<Path>>(
         wallet_file_name: P,
         seedphrase: String,

@@ -144,6 +144,17 @@ fn display_wallet_balance(wallet_file_name: &PathBuf) {
     println!("total balance = {}", balance);
 }
 
+fn display_wallet_keys(wallet_file_name: &PathBuf) {
+    let wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
+        Ok(w) => w,
+        Err(error) => {
+            println!("error loading wallet file: {:?}", error);
+            return;
+        }
+    };
+    wallet.print_wallet_key_data();
+}
+
 fn print_receive_invoice(wallet_file_name: &PathBuf) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
@@ -230,6 +241,9 @@ enum Subcommand {
     /// Prints current wallet balance.
     WalletBalance,
 
+    /// Dumps all information in wallet file for debugging
+    DisplayWalletKeys,
+
     /// Prints receive invoice.
     GetReceiveInvoice,
 
@@ -247,23 +261,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::GenerateWallet => {
             generate_wallet(&args.wallet_file_name)?;
         }
-
         Subcommand::RecoverWallet => {
             recover_wallet(&args.wallet_file_name)?;
         }
-
         Subcommand::WalletBalance => {
             display_wallet_balance(&args.wallet_file_name);
         }
-
+        Subcommand::DisplayWalletKeys => {
+            display_wallet_keys(&args.wallet_file_name);
+        }
         Subcommand::GetReceiveInvoice => {
             print_receive_invoice(&args.wallet_file_name);
         }
-
         Subcommand::RunMaker { port } => {
             run_maker(&args.wallet_file_name, port);
         }
-
         Subcommand::CoinswapSend => {
             run_taker(&args.wallet_file_name);
         }
