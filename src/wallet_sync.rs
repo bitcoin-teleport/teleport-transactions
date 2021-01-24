@@ -51,7 +51,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::contracts;
-use crate::contracts::read_pubkeys_from_multisig_redeemscript;
+use crate::contracts::SwapCoin;
 use std::path::Path;
 
 //these subroutines are coded so that as much as possible they keep all their
@@ -60,7 +60,7 @@ use std::path::Path;
 
 //TODO this goes in the config file
 pub const NETWORK: Network = Network::Regtest; //not configurable for now
-const INITIAL_ADDRESS_IMPORT_COUNT: usize = 500;
+const INITIAL_ADDRESS_IMPORT_COUNT: usize = 5000;
 const DERIVATION_PATH: &str = "m/84'/1'/0'";
 const WALLET_FILE_VERSION: u32 = 0;
 
@@ -123,6 +123,14 @@ impl SwapCoin {
         }
     }
 
+    fn get_my_pubkey(&self) -> PublicKey {
+        let secp = Secp256k1::new();
+        PublicKey {
+            compressed: true,
+            key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
+        }
+    }
+
     fn sign_transaction_input(
         &self,
         index: usize,
@@ -134,10 +142,7 @@ impl SwapCoin {
             return Err("unable to sign: incomplete coinswap for this input");
         }
         let secp = Secp256k1::new();
-        let my_pubkey = PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
-        };
+        let my_pubkey = self.get_my_pubkey();
 
         let sighash = secp256k1::Message::from_slice(
             &SigHashCache::new(tx).signature_hash(
@@ -338,13 +343,10 @@ impl Wallet {
         first_addr_imported && last_addr_imported
     }
 
-    fn is_swapcoin_redeemscript_imported(
-        &self,
-        rpc: &Client,
-        multisig_redeemscript: &Script,
-    ) -> bool {
-        let addr = Address::p2wsh(&multisig_redeemscript, NETWORK).to_string();
-        rpc.call::<serde_json::Value>("getaddressinfo", &[Value::String(addr)])
+    fn is_swapcoin_descriptor_imported(&self, rpc: &Client, descriptor: &str) -> bool {
+        let addr = rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
+        rpc
+            .call::<serde_json::Value>("getaddressinfo", &[Value::String(addr.to_string())])
             .unwrap()["iswatchonly"]
             .as_bool()
             .unwrap()
@@ -380,12 +382,12 @@ impl Wallet {
     pub fn import_initial_addresses(
         &self,
         rpc: &Client,
-        descriptors_to_import: &[&String],
-        swapcoins_to_import: &[&(Script, Script)],
+        hd_descriptors_to_import: &[&String],
+        swapcoin_descriptors_to_import: &[String],
     ) {
         let address_label = self.get_core_wallet_label();
 
-        let import_requests = descriptors_to_import
+        let import_requests = hd_descriptors_to_import
             .iter()
             .map(|desc| ImportMultiRequest {
                 timestamp: ImportMultiRescanSince::Now,
@@ -396,12 +398,11 @@ impl Wallet {
                 ..Default::default()
             })
             .chain(
-                swapcoins_to_import
+                swapcoin_descriptors_to_import
                     .iter()
-                    .map(|(redeemscript, scriptpubkey)| ImportMultiRequest {
+                    .map(|desc| ImportMultiRequest {
                         timestamp: ImportMultiRescanSince::Now,
-                        script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(scriptpubkey)),
-                        redeem_script: Some(redeemscript),
+                        descriptor: Some(desc),
                         watchonly: Some(true),
                         label: Some(&address_label),
                         ..Default::default()
@@ -428,35 +429,29 @@ impl Wallet {
     pub fn startup_sync(&mut self, rpc: &Client) {
         //TODO many of these unwraps to be replaced with proper error handling
 
-        let descriptors = self.get_hd_wallet_descriptors(rpc);
-        let descriptors_to_import: Vec<&String> = descriptors
+        let hd_descriptors = self.get_hd_wallet_descriptors(rpc);
+        let hd_descriptors_to_import = hd_descriptors
             .iter()
             .filter(|d| !self.is_xpub_descriptor_imported(rpc, &d))
-            .collect();
+            .collect::<Vec<&String>>();
 
-        //self.swap_coins used to be a Vec<SwapCoin> rather than HashMap
-        //which is why this below set of iterator functions might look weird
-        let swapcoin_redeemscripts_scriptpubkeys = self
-            .swap_coins
-            .values()
-            .map(|s| s.get_multisig_redeemscript())
-            .map(|rs| (rs.clone(), Address::p2wsh(&rs, NETWORK).script_pubkey()))
-            .collect::<Vec<(Script, Script)>>();
-        let swapcoins_to_import = swapcoin_redeemscripts_scriptpubkeys
-            .iter()
-            .filter(|(rs, _spk)| !self.is_swapcoin_redeemscript_imported(rpc, &rs))
-            .collect::<Vec<&(Script, Script)>>();
+        let swapcoin_descriptors_to_import = self.swap_coins.values()
+            .map(|sc| format!("wsh(sortedmulti(2,{},{}))", sc.other_pubkey, sc.get_my_pubkey()))
+            .map(|d| rpc.get_descriptor_info(&d).unwrap().descriptor)
+            .filter(|d| !self.is_swapcoin_descriptor_imported(rpc, &d))
+            .collect::<Vec<String>>();
 
-        if descriptors_to_import.is_empty() && swapcoins_to_import.is_empty() {
+        if hd_descriptors_to_import.is_empty() && swapcoin_descriptors_to_import.is_empty() {
             return;
         }
 
         println!("new wallet detected, synchronizing balance...");
-        self.import_initial_addresses(rpc, &descriptors_to_import, &swapcoins_to_import);
+        self.import_initial_addresses(rpc, &hd_descriptors_to_import,
+            &swapcoin_descriptors_to_import);
 
         rpc.call::<Value>("scantxoutset", &[json!("abort")])
             .unwrap();
-        let desc_list = descriptors_to_import
+        let desc_list = hd_descriptors_to_import
             .iter()
             .map(|d| {
                 json!(
@@ -464,10 +459,9 @@ impl Wallet {
                 "range": INITIAL_ADDRESS_IMPORT_COUNT-1})
             })
             .chain(
-                swapcoins_to_import
+                swapcoin_descriptors_to_import
                     .iter()
-                    .map(|(rs, _spk)| read_pubkeys_from_multisig_redeemscript(rs).unwrap())
-                    .map(|(pub1, pub2)| json!(format!("wsh(multi(2,{},{}))", pub1, pub2))),
+                    .map(|d| json!(d))
             )
             .collect::<Vec<Value>>();
 
@@ -570,7 +564,6 @@ impl Wallet {
             let path = &desc[open.unwrap() + 1..close.unwrap()];
             let path_chunks: Vec<&str> = path.split('/').collect();
             if path_chunks.len() != 3 {
-                println!("unexpected descriptor = {}", desc);
                 continue;
                 //unexpected descriptor = wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q
             }
