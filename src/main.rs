@@ -99,7 +99,7 @@ fn get_bitcoin_rpc() -> Result<Client, Error> {
     Ok(rpc)
 }
 
-fn display_wallet_balance(wallet_file_name: &PathBuf) {
+fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
@@ -116,6 +116,8 @@ fn display_wallet_balance(wallet_file_name: &PathBuf) {
     };
     wallet.startup_sync(&rpc);
 
+    let long_form = long_form.unwrap_or(false);
+
     let mut utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
     utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
@@ -129,12 +131,14 @@ fn display_wallet_balance(wallet_file_name: &PathBuf) {
         let addr = utxo.address.unwrap().to_string();
         #[rustfmt::skip]
         println!(
-            "{}..{}:{} {}....{} {:^8} {:<7} {}",
-            &txid[0..6],
-            &txid[58..64],
+            "{}{}{}:{} {}{}{} {:^8} {:<7} {}",
+            if long_form { &txid } else {&txid[0..6] },
+            if long_form { "" } else { ".." },
+            if long_form { &"" } else { &txid[58..64] },
             utxo.vout,
-            &addr[0..10],
-            &addr[addr.len() - 10..addr.len()],
+            if long_form { &addr } else { &addr[0..10] },
+            if long_form { "" } else { "...." },
+            if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
             if utxo.witness_script.is_some() { "yes" } else { "no" },
             utxo.confirmations,
             utxo.amount
@@ -239,7 +243,7 @@ enum Subcommand {
     RecoverWallet,
 
     /// Prints current wallet balance.
-    WalletBalance,
+    WalletBalance { long_form: Option<bool> },
 
     /// Dumps all information in wallet file for debugging
     DisplayWalletKeys,
@@ -264,8 +268,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::RecoverWallet => {
             recover_wallet(&args.wallet_file_name)?;
         }
-        Subcommand::WalletBalance => {
-            display_wallet_balance(&args.wallet_file_name);
+        Subcommand::WalletBalance { long_form } => {
+            display_wallet_balance(&args.wallet_file_name, long_form);
         }
         Subcommand::DisplayWalletKeys => {
             display_wallet_keys(&args.wallet_file_name);
