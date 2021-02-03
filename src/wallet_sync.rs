@@ -615,7 +615,7 @@ impl Wallet {
         if index.is_err() {
             return None;
         }
-        return Some((path_chunks[0], addr_type.unwrap(), index.unwrap()));
+        Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
     }
 
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> u32 {
