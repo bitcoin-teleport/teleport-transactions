@@ -586,7 +586,7 @@ impl Wallet {
             .list_unspent(None, None, None, None, None)?
             .iter()
             .filter(|u| self.is_utxo_ours(u))
-            .map(|u| u.clone())
+            .cloned()
             .collect::<Vec<ListUnspentResultEntry>>())
     }
 
