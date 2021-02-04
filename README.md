@@ -31,25 +31,34 @@ The project is nowhere near usable. The code written so far is published for dev
 
 * Download this git repository. Open the file `src/main.rs` and edit the RPC username and password in the function `get_bitcoin_rpc`. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same function.
 
-* Create two teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` twice. Instead of `<wallet-name>`, use something like `maker.teleport` and `taker.teleport`.
+* Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` twice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
 
-* Use `cargo run -- --wallet-file-name=maker.teleport get-receive-invoice` to obtain 3 addresses of the maker wallet, and send regtest bitcoins to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Do this as well for the `taker.teleport` wallet. Get the transactions confirmed.
+* Use `cargo run -- --wallet-file-name=maker1.teleport get-receive-invoice` to obtain 3 addresses of the maker1 wallet, and send regtest bitcoins to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Also do this for the `maker2.teleport` and `taker.teleport` wallets. Get the transactions confirmed.
 
-* Check your balance with `cargo run -- --wallet-file-name=maker.teleport wallet-balance`. Example:
+* Check the wallet balances with `cargo run -- --wallet-file-name=maker1.teleport wallet-balance`. Example:
 
 ```
-$ cargo run -- --wallet-file-name=taker.teleport wallet-balance
+$ cargo run -- --wallet-file-name=maker1.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
 8f6ee5..74e813:0 bcrt1q0vn5....nrjdqljtaq    no    1       0.05000000 BTC
 d548a8..cadd5e:0 bcrt1qaylc....vnw4ay98jq    no    1       0.05000000 BTC
 604ca6..4ab5f0:1 bcrt1qt3jy....df6pmewmzs    no    1       0.05000000 BTC
 coin count = 3
 total balance = 0.15000000 BTC
-
 ```
 
 ```
-$ cargo run -- --wallet-file-name=maker.teleport wallet-balance
+$ cargo run -- --wallet-file-name=maker2.teleport wallet-balance
+outpoint         address                  swapcoin conf    value
+d33f06..30dd07:0 bcrt1qh6kq....e0tlfrzgxa    no    1       0.05000000 BTC
+8aaa89..ef5613:0 bcrt1q9vyj....plh8x37n7g    no    1       0.05000000 BTC
+383ffe..127065:1 bcrt1qlwzv....pdqtrg0xuu    no    1       0.05000000 BTC
+coin count = 3
+total balance = 0.15000000 BTC
+```
+
+```
+$ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
 5f4331..d53f14:0 bcrt1qmflt....q2ucgf2teu    no    1       0.05000000 BTC
 6252ee..d827b0:0 bcrt1qu9mk....pwpedjyl9u    no    1       0.05000000 BTC
@@ -58,37 +67,54 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-* On one terminal run the maker server with `cargo run -- --wallet-file-name=maker.teleport run-maker 6102`. You should see the message `listening on port 6102`.
+* On one terminal run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-maker 6102`. You should see the message `listening on port 6102`.
+
+* On another terminal run a maker server with `cargo run -- --wallet-file-name=maker2.teleport run-maker 16102`. You should see the message `listening on port 16102`.
 
 * On another terminal start a coinswap with `cargo run -- --wallet-file-name=taker.teleport coinswap-send`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell regtest to generate another block (or just wait if you're using testnet).
 
-* Once you see the message `successfully completed coinswap` on both terminals then check the wallet balance again to see the result of the coinswap. Example:
+* Once you see the message `successfully completed coinswap` on all terminals then check the wallet balance again to see the result of the coinswap. Example:
+
+```
+$ cargo run -- --wallet-file-name=maker1.teleport wallet-balance
+outpoint         address                  swapcoin conf    value
+9bfeec..0cc468:0 bcrt1qx49k....9cqqrp3kt0   yes    2       0.00134344 BTC
+973ab4..48f5b7:1 bcrt1qdu4j....ru3qmw4gcf   yes    2       0.00224568 BTC
+2edf14..74c3b9:0 bcrt1qfw6z....msrsdx9sl0   yes    2       0.00131088 BTC
+bd6321..217707:0 bcrt1q35g8....rt6al6kz7s    no    1       0.04758551 BTC
+c6564e..40fb64:0 bcrt1qrnzc....czs840p4np    no    1       0.04947775 BTC
+08e857..c8c67b:0 bcrt1qdxdg....k7882f0ya2    no    1       0.04808502 BTC
+coin count = 6
+total balance = 0.15004828 BTC
+```
+
+```
+$ cargo run -- --wallet-file-name=maker2.teleport wallet-balance
+outpoint         address                  swapcoin conf    value
+9d8895..e32645:1 bcrt1qm73u....3h6swyege3   yes    3       0.00046942 BTC
+7cab11..07ff62:1 bcrt1quumg....gtjs29jt8t   yes    3       0.00009015 BTC
+289a13..ab4672:0 bcrt1qsavn....t5dsac43tl   yes    3       0.00444043 BTC
+9bfeec..0cc468:1 bcrt1q24f8....443ts4rzz0    no    2       0.04863932 BTC
+973ab4..48f5b7:0 bcrt1q5klz....jhhtlyjpkg    no    2       0.04773708 BTC
+2edf14..74c3b9:1 bcrt1qh2aw....7xx8wft658    no    2       0.04867188 BTC
+coin count = 6
+total balance = 0.15004828 BTC
+```
 
 ```
 $ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 outpoint         address                  swapcoin conf    value
-d33f06..30dd07:0 bcrt1q8hjk....9g9q444076   yes    1       0.01240012 BTC
-8aaa89..ef5613:0 bcrt1qaapk....7ytxhclfm5    no    2       0.04913714 BTC
-383ffe..127065:1 bcrt1qrfp3....2n6n57y3cc    no    2       0.02608261 BTC
-41789c..93ec7f:1 bcrt1qknhq....fwyqq5gfu0   yes    1       0.03636660 BTC
-73271a..7d09b8:1 bcrt1qsxlt....gu3qtpgws5   yes    1       0.00113328 BTC
-111a96..1c84dc:0 bcrt1q64hp....ectyys5jvs    no    2       0.02472883 BTC
+9d8895..e32645:0 bcrt1qevgn....6nhl2yswa7    no    3       0.04951334 BTC
+7cab11..07ff62:0 bcrt1qxs5f....0j8khru45s    no    3       0.04989261 BTC
+289a13..ab4672:1 bcrt1qkwka....g9ts2ch392    no    3       0.04554233 BTC
+bd6321..217707:1 bcrt1qat5h....vytquawwke   yes    1       0.00239725 BTC
+c6564e..40fb64:1 bcrt1qshwp....3x8qjtwdf6   yes    1       0.00050501 BTC
+08e857..c8c67b:1 bcrt1q37lf....5tvqndktw6   yes    1       0.00189774 BTC
 coin count = 6
-total balance = 0.14984858 BTC
+total balance = 0.14974828 BTC
 ```
 
-```
-$ cargo run -- --wallet-file-name=maker.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-d33f06..30dd07:1 bcrt1q6dqq....hyv7ak568q    no    1       0.03758274 BTC
-8aaa89..ef5613:1 bcrt1qw74e....9phqzpvflr   yes    2       0.00084572 BTC
-383ffe..127065:0 bcrt1qrtug....hgss04vpqn   yes    2       0.02390025 BTC
-41789c..93ec7f:0 bcrt1qta5h....htq77mazlu    no    1       0.01361626 BTC
-73271a..7d09b8:0 bcrt1qd9x6....xnldz7xhu7    no    1       0.04884958 BTC
-111a96..1c84dc:1 bcrt1qe70f....3rusg3whuf   yes    2       0.02525403 BTC
-coin count = 6
-total balance = 0.15004858 BTC
-```
+* Edit the file `taker_protocol.rs` at the start of the function `send_coinswap` to edit parameters like the total coinswap amount, number of makers to do a multi-hop coinswap with and number of transactions per hop.
 
 * To switch between regtest and testnet, edit the constant `NETWORK` which is found near the top of the file `src/wallet_sync.rs`. To edit the coinswap send amount, or the number of taker and maker transactions, look in the file `src/taker_protocol.rs` near the top of the function `send_coinswap`.
 
