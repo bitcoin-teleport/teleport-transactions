@@ -22,9 +22,7 @@ use bitcoin::{
         opcodes::all,
         script::{Builder, Script},
     },
-    hashes::{
-        hex::{FromHex, ToHex},
-    },
+    hashes::hex::{FromHex, ToHex},
     secp256k1,
     secp256k1::{Secp256k1, SecretKey, Signature},
     util::{
@@ -805,8 +803,8 @@ impl Wallet {
         //a <-- a + (t - (a+b+c+...))    | assign new first output value
         //a <-- a + (t -a-b-c-...)       | rearrange
         //a <-- t - b - c -...           |
-        *output_values.first_mut().unwrap() = coinswap_amount
-            - output_values.iter().skip(1).sum::<u64>();
+        *output_values.first_mut().unwrap() =
+            coinswap_amount - output_values.iter().skip(1).sum::<u64>();
         assert_eq!(output_values.iter().sum::<u64>(), coinswap_amount);
 
         let mut spending_txes = Vec::<Transaction>::new();

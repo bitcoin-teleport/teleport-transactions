@@ -353,17 +353,25 @@ async fn send_coinswap(
         .await?;
     }
 
-    println!("my outgoing txes = {:#?}",
+    println!(
+        "my outgoing txes = {:#?}",
         my_funding_txes.iter().map(|t| t.txid()).collect::<Vec<_>>()
     );
     for (index, watchonly_swapcoin) in watchonly_swapcoins.iter().enumerate() {
-        println!("maker[{}] funding txes = {:#?}", index,
-            watchonly_swapcoin.iter().map(|w| w.contract_tx.input[0].previous_output.txid)
+        println!(
+            "maker[{}] funding txes = {:#?}",
+            index,
+            watchonly_swapcoin
+                .iter()
+                .map(|w| w.contract_tx.input[0].previous_output.txid)
                 .collect::<Vec<_>>()
         );
     }
-    println!("my incoming txes = {:#?}",
-        incoming_swapcoins.iter().map(|w| w.contract_tx.input[0].previous_output.txid)
+    println!(
+        "my incoming txes = {:#?}",
+        incoming_swapcoins
+            .iter()
+            .map(|w| w.contract_tx.input[0].previous_output.txid)
             .collect::<Vec<_>>()
     );
 

@@ -43,8 +43,10 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
         println!("And this extension =\n\"{}\"", extension);
     }
 
-    println!("\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
-        The teleport wallet file is needed to backup swapcoins");
+    println!(
+        "\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
+        The teleport wallet file is needed to backup swapcoins"
+    );
 
     Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension)?;
 
@@ -85,10 +87,9 @@ fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
 
 fn get_bitcoin_rpc() -> Result<Client, Error> {
     //TODO put all this in a config file
-    const RPC_CREDENTIALS: Option<(&str, &str)> =
-        Some(("regtestrpcuser", "regtestrpcpass"));
-        //Some(("btcrpcuser", "btcrpcpass"));
-        //None; // use Bitcoin Core cookie-based authentication
+    const RPC_CREDENTIALS: Option<(&str, &str)> = Some(("regtestrpcuser", "regtestrpcpass"));
+    //Some(("btcrpcuser", "btcrpcpass"));
+    //None; // use Bitcoin Core cookie-based authentication
 
     let auth = match RPC_CREDENTIALS {
         Some((user, pass)) => Auth::UserPass(user.to_string(), pass.to_string()),
@@ -97,7 +98,7 @@ fn get_bitcoin_rpc() -> Result<Client, Error> {
             //     also support other OSes (Windows, MacOS...) and networks
             let data_dir = home_dir().unwrap().join(".bitcoin");
             Auth::CookieFile(data_dir.join("regtest").join(".cookie"))
-        },
+        }
     };
     let rpc = Client::new(
         "http://localhost:18443/wallet/teleport"
