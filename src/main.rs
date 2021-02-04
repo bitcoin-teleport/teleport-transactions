@@ -43,7 +43,8 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
         println!("And this extension =\n\"{}\"", extension);
     }
 
-    println!("\nThis seed phrase is NOT enough to backup all coins in your wallet");
+    println!("\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
+        The teleport wallet file is needed to backup swapcoins");
 
     Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension)?;
 
