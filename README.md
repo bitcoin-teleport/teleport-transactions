@@ -8,6 +8,7 @@ Now imagine another user, Carol, who isn't too bothered by privacy and sends her
 
 In a world where advertisers, social media and other institutions want to collect all of Alice's and Carol's data, such privacy improvement is incredibly valuable. And the doubt added to every transaction would greatly boost the [fungibility of bitcoin](https://en.bitcoin.it/wiki/Fungibility) and so make it a better form of money.
 
+Project design document: [Design for a CoinSwap Implementation for Massively Improving Bitcoin Privacy and Fungibility](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
 
 ## Contents
 
@@ -121,65 +122,150 @@ total balance = 0.14974828 BTC
 
 ## Developer resources
 
-Here are links to some reading material for any developers who want to get up to speed.
+### How CoinSwap works
 
-* [Design for a CoinSwap Implementation for Massively Improving Bitcoin Privacy and Fungibility](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964) - High level design explaining all the building blocks
+A two-party coinswap are where Alice and Bob swap a coin in a non-custodial where neither party can steal from each other. At worst they can waste time and miner fees.
+
+To start a coinswap, Alice will obtain one of Bob's public keys and use that to create a 2-of-2 multisignature address (known as Alice's coinswap address) made from Alice's and Bob's public keys. Alice will create a transaction (known as Alice's funding transaction) sending some of her coins (known as the coinswap amount) into this 2-of-2 multisig, but before she actually broadcasts this transaction she will ask Bob to use his corresponding private key to sign a transaction (known as Alice contract transaction) which sends the coins back to Alice after a timeout. Even though Alice's coins would be in a 2-of-2 multisig not controlled by her, she knows that if she broadcasts her contract transaction she will be able to get her coins back even if Bob disappears.
+
+Soon after all this has happened, Bob will do a similar thing but mirrored. Bob will obtain one of Alice's public keys and from it Bob's coinswap address. Bob creates a funding transaction paying to itthe same coinswap amount, but before he broadcasts it he gets Alice to sign a contract transaction which sends Bob's coins back to him after a timeout.
+
+At this point both Alice and Bob are able to broadcast their funding transactions paying coins into multisig addresses, and if they want they can get those coins back by broadcasting their contract transactions and waiting for the timeout. The trick with coinswap is that the contract transaction script contains a second clause: it is also possible for the other party to get the coins by providing a hash preimage (e.g. HX = sha256(X)) without waiting for a timeout. The effect of this is that if the hash preimage is revealed to both parties then the coins in the multisig addresses have transferred possession off-chain to the other party who originally didnt own those coins.
+
+When the preimage is not known, Alice can use her contract transaction to get coins from Alice's multisig address after a timeout, and Bob can use his contract transaction to get coins from the Bob multisig address after a timeout. After the preimage is known, Alice can use Bob's contract transaction and the preimage to get coins from Bob's multisig address, and also Bob can use Alice's contract transaction and the preimage to get the coins from Alice's multisig address.
+
+Here is a diagram of Alice and Bob's coins and how they swap possession after a coinswap:
+```
+                                              Alice after a timeout
+                                             /
+                                            /
+Alice's coins ------> Alice coinswap address
+                                            \
+                                             \
+                                              Bob with knowledge of the hash preimage
+
+
+                                          Bob after a timeout
+                                         /
+                                        /
+Bob's coins ------> Bob coinswap address
+                                        \
+                                         \
+                                          Alice with knowledge of the hash preimage
+```
+
+If Alice attempts to the coins from Bob's coinswap addres using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address.
+
+So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vis versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her possession. The same is true for Bob.
+
+[Bitcoin's script](https://en.bitcoin.it/wiki/Script) is used to code these conditions. Diagrams of the transactions:
+```
+= Alice's funding transaction =
+Alice's inputs -----> multisig (Alice pubkey + Bob pubkey)
+
+= Bob's funding transaction =
+Bob's inputs -----> multisig (Bob pubkey + Alice pubkey)
+
+= Alice's contract transaction=
+multisig (Alice pubkey + Bob pubkey) -----> contract script (Alice pubkey + timelock OR Bob pubkey + hashlock)
+
+= Bob's contract transaction=
+multisig (Bob pubkey + Alice pubkey) -----> contract script (Bob pubkey + timelock OR Alice pubkey + hashlock)
+```
+
+The contract transactions are only ever used if a dispute occurs. If all goes well the contract transactions never hit the blockchain and so the hashlock is never revealed, and therefore the coinswap improves privacy by delinking the transaction graph.
+
+The party which starts with knowledge of the hash preimage must have a longer timeout, this means there is always enough time for the party without knowledge of the preimage to read the preimage from the blockchain and get their own transaction confirmed.
+
+This explanation describes the simplest form of coinswap. On it's own it isnt enough to build a really great private system. For more building blocks read the [design document of this project](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964).
+
+### Notes on architecture
+
+Makers are servers which run Tor hidden services (or possibly other hosting solutions in case Tor ever stops working). Takers connect to them. Makers never connect to each other.
+
+Diagram of connections for a 4-hop coinswap:
+```
+        ---- Bob
+       /
+      /
+Alice ------ Charlie
+      \
+       \
+        ---- Dennis
+```
+
+The coinswap itself is multi-hop:
+
+```
+Alice ===> Bob ===> Charlie ===> Dennis ===> Alice
+```
+
+Makers are not even meant to know how many other makers there are in the route. They just offer their services, offer their fees, protect themselves from DOS, complete the coinswaps and make sure they get paid those fees. We aim to have makers have a little state as possible, which should help with DOS-resistance.
+
+All the big decisions are made by takers (which makes sense because takers are paying, and the customer is always right.)
+Decisions like:
+* How many makers in the route
+* How many transactions in the multi-transaction coinswap
+* How long to wait between funding txes
+* The bitcoin amount in the coinswap
+
+In this protocol its always important to as much as possible avoid DOS attack opportunities, especially against makers.
+
+
+### Protocol between takers and makers
+
+Alice is the taker, Bob, Charlie and Dennis are makers. For a detailed explanation including definitions see the mailing list email [here](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html). That email should be read first and then you can jump back to the diagram below when needed while reading the code.
+
+Protocol messages are defined by the structs found in `src/messages.rs` and serialized into json with rust's serde crate.
+
+```
+ | Alice           | Bob             | Charlie         |  Dennis         | message, or (step) if repeat
+ |=================|=================|=================|=================|
+0. AB/A htlc     ---->               |                 |                 | sign senders contract
+1.               <---- AB/A htlc B/2 |                 |                 | senders contract sig
+2.    ************** BROADCAST AND MINE ALICE FUNDING TX *************** |
+3.    A fund     ---->               |                 |                 | proof of funding
+4.               <----AB/B+BC/B htlc |                 |                 | sign senders and receivers contract
+5. BC/B htlc     ---------------------->               |                 | (0)
+6.               <---------------------- BC/B htlc C/2 |                 | (1)
+7. AB/B+BC/B A+C/2--->               |                 |                 | senders and receivers contract sig
+8.    ************** BROADCAST AND MINE BOB FUNDING TX ***************   |
+A.    B fund     ---------------------->               |                 | (3)
+B.               <----------------------BC/C+CD/C htlc |                 | (4)
+C. CD/C htcl     ---------------------------------------->               | (0)
+D.               <---------------------------------------- CD/C htlc D/2 | (1)
+E. BC/C htlc     ---->               |                 |                 | sign receiver contract
+F.               <---- BC/C htlc B/2 |                 |                 | receiver contract sig
+G.BC/C+CD/C B+D/2----------------------->              |                 | (7)
+H.   ************** BROADCAST AND MINE CHARLIE FUNDING TX ************** |
+I.   C fund      ---------------------------------------->               | (3)
+J.               <----------------------------------------CD/D+DA/D htlc | (4)
+K. CD/D htlc     ---------------------->               |                 | (E)
+L.               <---------------------- CD/D htlc C/2 |                 | (F)
+M.CD/D+DA/D C+D/2---------------------------------------->               | (7)
+N.   ************** BROADCAST AND MINE DENNIS FUNDING TX *************** |
+O. DA/A htlc     ---------------------------------------->               | (E)
+P.               <---------------------------------------- DA/A htlc D/2 | (F)
+Q. hash preimage ---->               |                 |                 | hash preimage
+R.               <---- privB(B+C)    |                 |                 | privkey handover
+S.    privA(A+B) ---->               |                 |                 | (R)
+T. hash preimage ---------------------->               |                 | (Q)
+U.               <---------------------- privC(C+D)    |                 | (R)
+V.    privB(B+C) ---------------------->               |                 | (R)
+W. hash preimage ---------------------------------------->               | (Q)
+X                <---------------------------------------- privD(D+A)    | (R)
+Y.    privC(C+D) ---------------------------------------->               | (R)
+```
+
+
+### Further reading
+
+* [Waxwing's blog post from 2017 about CoinSwap](https://web.archive.org/web/20200524041008/https://joinmarket.me/blog/blog/coinswaps/)
 
 * [gmaxwell's original coinswap writeup from 2013](https://bitcointalk.org/index.php?topic=321228.0). It explains how CoinSwap actually works. If you already understand how Lightning payment channels work then CoinSwap is similar.
 
 * [Design for improving JoinMarket's resistance to sybil attacks using fidelity bonds](https://gist.github.com/chris-belcher/18ea0e6acdb885a2bfbdee43dcd6b5af/). Document explaining the concept of fidelity bonds and how they provide resistance against sybil attacks.
 
-
-### Protocol between takers and makers
-
-Alice is the taker, Bob and Charlie are makers. For a detailed explanation including definitions see the mailing list email [here](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html). That email should be read first and then you can jump back to the diagram below when needed while reading the code.
-
-Protocol messages are defined by the structs found in `src/messages.rs` and serialized into json with rust's serde crate.
-
-```
- | Alice           | Bob             | Charlie         | message name, or (step) if its a repeat
- |=================|=================|=================|
-0. AB/A htlc + p ---->               |                 | sign senders contract
-1.               <---- AB/A htlc B/2 |                 | senders contract sig
-2.    ***** BROADCAST AND MINE ALICE FUNDING TX *****  |
-3.    A fund + p ---->               |                 | proof of funding
-4.               <----AB/B+BC/B htlc |                 | sign senders and receivers contract
-5. BC/B htlc + p ---------------------->               | (0)
-6.               <---------------------- BC/B htlc C/2 | (1)
-7. AB/B+BC/B A+C/2--->               |                 | senders and receivers contract sig
-8.    ***** BROADCAST AND MINE BOB FUNDING TX *****    |
-A.    B fund + p ----------------------->              | (3)
-B.               <-----------------------BC/C+CA/C htlc| (4)
-C. BC/C htlc + p ---->               |                 | sign receiver contract
-D.               <---- BC/C htlc B/2 |                 | receiver contract sig
-E.BC/C+CA/C B+A/2----------------------->              | (7)
-F.   ***** BROADCAST AND MINE CHARLIE FUNDING TX ***** |
-G. CA/A htlc + p ---------------------->               | (C)
-H.               <---------------------- CA/A htlc C/2 | (D)
-I. hash preimage ---------------------->               | hash preimage
-J. hash preimage ---->               |                 | (I)
-K.               <---- privB(B+C)    |                 | private key (this struct is in both enums MakerToTakerMessages and TakerToMakerMessages)
-L.               <---------------------- privC(C+A)    | (K)
-M.    privB(B+C) ---------------------->               | (K)
-N.    privA(A+B) ---->               |                 | (K)
-
-```
-
-
-### Notes on architecture
-
-Makers are servers which run Tor hidden services. Takers connect to them.
-
-We aim to have makers have a little state as possible. Makers are not even meant to know how many other makers there are in the route. They just offer their services, offer their fees, protect themselves from DOS, complete the coinswaps and make sure they get paid those fees.
-
-All the big decisions are made by takers (which makes sense because takers are paying, the customer is always right etc)
-Decisions like:
-* how many makers in the route
-* how many transactions in the multi-transaction coinswap
-* how long to wait between funding txes
-* the bitcoin amount in the coinswap
-
-In this protocol its always important to as much as possible avoid DOS attack opportunities, especially against makers.
 
 
 ## Chris Belcher's personal roadmap for the project
