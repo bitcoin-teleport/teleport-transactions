@@ -1,12 +1,12 @@
 # Teleport Transactions
 
-Teleport Transactions is software aiming to improve the [privacy](https://en.bitcoin.it/wiki/Privacy) of [bitcoin](https://en.bitcoin.it/wiki/Main_Page).
+Teleport Transactions is software aiming to improve the [privacy](https://en.bitcoin.it/wiki/Privacy) of [Bitcoin](https://en.bitcoin.it/wiki/Main_Page).
 
-Suppose Alice has bitcoins and wants to send them with maximal privacy, so she creates a special kind of transaction. For anyone looking at the blockchain her transaction appears completely normal with her coins seemingly going from bitcoin address A to address B. But in reality her coins end up in address Z which is entirely unconnected to either A or B.
+Suppose Alice has bitcoin and wants to send them with maximal privacy, so she creates a special kind of transaction. For anyone looking at the blockchain her transaction appears completely normal with her coins seemingly going from Bitcoin address A to address B. But in reality her coins end up in address Z which is entirely unconnected to either A or B.
 
 Now imagine another user, Carol, who isn't too bothered by privacy and sends her bitcoin using a regular wallet. But because Carol's transaction looks exactly the same as Alice's, anybody analyzing the blockchain must now deal with the possibility that Carol's transaction actually sent her coins to a totally unconnected address. So Carol's privacy is improved even though she didn't change her behaviour, and perhaps had never even heard of this software.
 
-In a world where advertisers, social media and other institutions want to collect all of Alice's and Carol's data, such privacy improvement is incredibly valuable. And the doubt added to every transaction would greatly boost the [fungibility of bitcoin](https://en.bitcoin.it/wiki/Fungibility) and so make it a better form of money.
+In a world where advertisers, social media and other institutions want to collect all of Alice's and Carol's data, such privacy improvement is incredibly valuable. And the doubt added to every transaction would greatly boost the [fungibility of Bitcoin](https://en.bitcoin.it/wiki/Fungibility) and so make it a better form of money.
 
 Project design document: [Design for a CoinSwap Implementation for Massively Improving Bitcoin Privacy and Fungibility](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
 
@@ -34,7 +34,7 @@ The project is nowhere near usable. The code written so far is published for dev
 
 * Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` twice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
 
-* Use `cargo run -- --wallet-file-name=maker1.teleport get-receive-invoice` to obtain 3 addresses of the maker1 wallet, and send regtest bitcoins to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Also do this for the `maker2.teleport` and `taker.teleport` wallets. Get the transactions confirmed.
+* Use `cargo run -- --wallet-file-name=maker1.teleport get-receive-invoice` to obtain 3 addresses of the maker1 wallet, and send regtest bitcoin to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Also do this for the `maker2.teleport` and `taker.teleport` wallets. Get the transactions confirmed.
 
 * Check the wallet balances with `cargo run -- --wallet-file-name=maker1.teleport wallet-balance`. Example:
 
@@ -124,13 +124,13 @@ total balance = 0.14974828 BTC
 
 ### How CoinSwap works
 
-A two-party coinswap are where Alice and Bob swap a coin in a non-custodial where neither party can steal from each other. At worst they can waste time and miner fees.
+In a two-party coinswap, Alice and Bob can swap a coin in a non-custodial way, where neither party can steal from each other. At worst, they can waste time and miner fees.
 
 To start a coinswap, Alice will obtain one of Bob's public keys and use that to create a 2-of-2 multisignature address (known as Alice's coinswap address) made from Alice's and Bob's public keys. Alice will create a transaction (known as Alice's funding transaction) sending some of her coins (known as the coinswap amount) into this 2-of-2 multisig, but before she actually broadcasts this transaction she will ask Bob to use his corresponding private key to sign a transaction (known as Alice contract transaction) which sends the coins back to Alice after a timeout. Even though Alice's coins would be in a 2-of-2 multisig not controlled by her, she knows that if she broadcasts her contract transaction she will be able to get her coins back even if Bob disappears.
 
-Soon after all this has happened, Bob will do a similar thing but mirrored. Bob will obtain one of Alice's public keys and from it Bob's coinswap address. Bob creates a funding transaction paying to itthe same coinswap amount, but before he broadcasts it he gets Alice to sign a contract transaction which sends Bob's coins back to him after a timeout.
+Soon after all this has happened, Bob will do a similar thing but mirrored. Bob will obtain one of Alice's public keys and from it Bob's coinswap address. Bob creates a funding transaction paying to it the same coinswap amount, but before he broadcasts it he gets Alice to sign a contract transaction which sends Bob's coins back to him after a timeout.
 
-At this point both Alice and Bob are able to broadcast their funding transactions paying coins into multisig addresses, and if they want they can get those coins back by broadcasting their contract transactions and waiting for the timeout. The trick with coinswap is that the contract transaction script contains a second clause: it is also possible for the other party to get the coins by providing a hash preimage (e.g. HX = sha256(X)) without waiting for a timeout. The effect of this is that if the hash preimage is revealed to both parties then the coins in the multisig addresses have transferred possession off-chain to the other party who originally didnt own those coins.
+At this point both Alice and Bob are able to broadcast their funding transactions paying coins into multisig addresses, and if they want they can get those coins back by broadcasting their contract transactions and waiting for the timeout. The trick with coinswap is that the contract transaction script contains a second clause: it is also possible for the other party to get the coins by providing a hash preimage (e.g. HX = sha256(X)) without waiting for a timeout. The effect of this is that if the hash preimage is revealed to both parties then the coins in the multisig addresses have transferred possession off-chain to the other party who originally didn't own those coins.
 
 When the preimage is not known, Alice can use her contract transaction to get coins from Alice's multisig address after a timeout, and Bob can use his contract transaction to get coins from the Bob multisig address after a timeout. After the preimage is known, Alice can use Bob's contract transaction and the preimage to get coins from Bob's multisig address, and also Bob can use Alice's contract transaction and the preimage to get the coins from Alice's multisig address.
 
@@ -154,7 +154,7 @@ Bob's coins ------> Bob coinswap address
                                           Alice with knowledge of the hash preimage
 ```
 
-If Alice attempts to the coins from Bob's coinswap addres using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address.
+If Alice attempts to the coins from Bob's coinswap address using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address.
 
 So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vis versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her possession. The same is true for Bob.
 
@@ -177,7 +177,7 @@ The contract transactions are only ever used if a dispute occurs. If all goes we
 
 The party which starts with knowledge of the hash preimage must have a longer timeout, this means there is always enough time for the party without knowledge of the preimage to read the preimage from the blockchain and get their own transaction confirmed.
 
-This explanation describes the simplest form of coinswap. On it's own it isnt enough to build a really great private system. For more building blocks read the [design document of this project](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964).
+This explanation describes the simplest form of coinswap. On its own it isn't enough to build a really great private system. For more building blocks read the [design document of this project](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964).
 
 ### Notes on architecture
 
@@ -200,7 +200,7 @@ The coinswap itself is multi-hop:
 Alice ===> Bob ===> Charlie ===> Dennis ===> Alice
 ```
 
-Makers are not even meant to know how many other makers there are in the route. They just offer their services, offer their fees, protect themselves from DOS, complete the coinswaps and make sure they get paid those fees. We aim to have makers have a little state as possible, which should help with DOS-resistance.
+Makers are not even meant to know how many other makers there are in the route. They just offer their services, offer their fees, protect themselves from DOS, complete the coinswaps and make sure they get paid those fees. We aim to have makers have as little state as possible, which should help with DOS-resistance.
 
 All the big decisions are made by takers (which makes sense because takers are paying, and the customer is always right.)
 Decisions like:
@@ -209,7 +209,7 @@ Decisions like:
 * How long to wait between funding txes
 * The bitcoin amount in the coinswap
 
-In this protocol its always important to as much as possible avoid DOS attack opportunities, especially against makers.
+In this protocol it's always important to as much as possible avoid DOS attack opportunities, especially against makers.
 
 
 ### Protocol between takers and makers
@@ -273,14 +273,14 @@ Y.    privC(C+D) ---------------------------------------->               | (R)
 * &#9745; learn rust
 * &#9745; learn rust-bitcoin
 * &#9745; design a protocol where all the features (vanilla coinswap, multi-tx coinswap, routed coinswap, branching routed coinswap, privkey handover) can be done, and publish to mailing list
-* &#9745; code simplest possible wallet, seed phrases "generate" and "recover", no fidelity bonds, everything is sybil attackable or DOS attackable for now, no RBF
+* &#9745; code the simplest possible wallet, seed phrases "generate" and "recover", no fidelity bonds, everything is sybil attackable or DOS attackable for now, no RBF
 * &#9745; implement creation and signing of traditional multisig
 * &#9745; code makers and takers to support simple coinswap
 * &#9745; code makers and takers to support multi-transaction coinswaps without any security (e.g. no broadcasting of contract transactions)
 * &#9745; code makers and takers to support multi-hop coinswaps without security
 * &#9744; write more developer documentation
 * &#9744; set up a solution to mirror this repository somewhere else in case github rm's it like they did youtube-dl
-* &#9744; implement and deploy fidelity bonds in joinmarket, to experiment and gain experiance with the concept
+* &#9744; implement and deploy fidelity bonds in joinmarket, to experiment and gain experience with the concept
 * &#9744; add proper error handling to this project, as right now most of the time it will exit on anything unexpected
 * &#9744; code security. For now watchtowers only in the same process as the main scripts
 * &#9744; code fidelity bonds
@@ -291,7 +291,7 @@ Y.    privC(C+D) ---------------------------------------->               | (R)
 * &#9744; automated tests (might be earlier in case its useful in test driven development)
 * &#9744; move wallet files and config to its own data directory ~/.teleport/
 * &#9744; add collateral inputs to receiver contract txes
-* &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to backup these wallets
+* &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to back up these wallets
 * &#9744; watchtowers in a separate process
 * &#9744; RELEASE FOR MAINNET
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
@@ -300,7 +300,7 @@ Y.    privC(C+D) ---------------------------------------->               | (R)
 * &#9744; reproducible builds + pin dependencies to a hash
 * &#9744; break as many blockchain analysis heuristics as possible, e.g. change address detection
 * &#9744; payjoin-with-coinswap with decoy UTXOs
-* &#9744; abstract away the Core RPC so that its functions can done another way, for example for the taker being supported as a plugin for electrum
+* &#9744; abstract away the Core RPC so that its functions can be done in another way, for example for the taker being supported as a plugin for electrum
 * &#9744; randomized locktimes, study with bayesian inference the best way to randomize them so that an individual maker learns as little information as possible from the locktime value
 * &#9744; anti-DOS protocol additions for maker (not using json but some kind of binary format that is harder to DOS)
 
