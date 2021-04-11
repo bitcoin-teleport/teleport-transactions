@@ -32,7 +32,7 @@ The project is nowhere near usable. The code written so far is published for dev
 
 * Download this git repository. Open the file `src/main.rs` and edit the RPC username and password in the function `get_bitcoin_rpc`. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same function.
 
-* Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` twice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
+* Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` thrice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
 
 * Use `cargo run -- --wallet-file-name=maker1.teleport get-receive-invoice` to obtain 3 addresses of the maker1 wallet, and send regtest bitcoin to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Also do this for the `maker2.teleport` and `taker.teleport` wallets. Get the transactions confirmed.
 
@@ -154,7 +154,7 @@ Bob's coins ------> Bob coinswap address
                                           Alice with knowledge of the hash preimage
 ```
 
-If Alice attempts to the coins from Bob's coinswap address using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address.
+If Alice attempts to take the coins from Bob's coinswap address using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address.
 
 So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vis versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her possession. The same is true for Bob.
 
