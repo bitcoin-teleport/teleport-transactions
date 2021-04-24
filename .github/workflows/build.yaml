@@ -1,0 +1,44 @@
+on: [push, pull_request]
+
+name: Continuous Integration
+
+jobs:
+
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - nightly 
+        features:
+          - default
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: Generate cache key
+        run: echo "${{ matrix.rust }} ${{ matrix.features }}" | tee .cache_key
+      - name: cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('.cache_key') }}-${{ hashFiles('**/Cargo.toml','**/Cargo.lock') }}
+      - name: Set default toolchain
+        run: rustup default ${{ matrix.rust }}
+      - name: Set profile
+        run: rustup set profile minimal
+      - name: Add clippy
+        run: rustup component add clippy
+      - name: Update toolchain
+        run: rustup update
+      - name: Build
+        run: cargo build --features ${{ matrix.features }} --no-default-features
+        # Uncomment clippy check after failures are removed
+      # - name: Clippy
+      #   run: cargo clippy --all-targets --features ${{ matrix.features }} --no-default-features -- -D warnings
+      - name: Test
+        run: cargo test --features ${{ matrix.features }} --no-default-features
