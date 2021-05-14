@@ -1,0 +1,23 @@
+
+on: [push, pull_request]
+
+name: Lint Checking
+
+jobs:
+
+  fmt:
+    name: Rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set default toolchain
+        run: rustup default stable
+      - name: Set profile
+        run: rustup set profile minimal
+      - name: Add rustfmt
+        run: rustup component add rustfmt
+      - name: Update toolchain
+        run: rustup update
+      - name: Check fmt
+        run: cargo fmt --all -- --check
