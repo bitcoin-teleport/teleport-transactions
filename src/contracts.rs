@@ -583,3 +583,349 @@ impl WatchOnlySwapCoin {
         })
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use bitcoin::consensus::encode::deserialize;
+    use bitcoin::hashes::hex::{FromHex, ToHex};
+    use bitcoin::PrivateKey;
+    use rand::{thread_rng, Rng};
+    use std::str::FromStr;
+    use std::string::String;
+
+    fn read_pubkeys_from_contract_reedimscript(
+        contract_script: &Script,
+    ) -> Result<(PublicKey, PublicKey), &'static str> {
+        let script_bytes = contract_script.to_bytes();
+
+        let hashpub =
+            PublicKey::from_slice(&script_bytes[27..60]).map_err(|_| "Bad pubkey data")?;
+        let timepub =
+            PublicKey::from_slice(&script_bytes[65..98]).map_err(|_| "Bad pubkey data")?;
+
+        Ok((hashpub, timepub))
+    }
+
+    #[test]
+    fn test_maker_pubkey_computation() {
+        let secp = Secp256k1::new();
+        let sk =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+
+        let pubkey = sk.public_key(&secp);
+
+        let nonce = SecretKey::from_slice(&[2; 32]).unwrap();
+
+        let maker_key_computed = calculate_maker_pubkey_from_nonce(pubkey, nonce);
+
+        let expected_pubkey = PublicKey::from_str(
+            "03bf98c86c3d536136378cf43ac42861ece609de87f5a44e19b730e8e9bd791938",
+        )
+        .unwrap();
+
+        assert_eq!(expected_pubkey, maker_key_computed);
+    }
+
+    #[test]
+    fn test_maker_pubkey_nonce_derviation() {
+        let secp = Secp256k1::new();
+
+        let privkey_org =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+
+        let pubkey_org = privkey_org.public_key(&secp);
+
+        let (pubkey_derived, nonce) = derive_maker_pubkey_and_nonce(pubkey_org.clone());
+
+        let nonce_point = secp256k1::PublicKey::from_secret_key(&secp, &nonce);
+
+        let expected_derivation = PublicKey {
+            compressed: true,
+            key: pubkey_org.key.combine(&nonce_point).unwrap(),
+        };
+
+        assert_eq!(pubkey_derived, expected_derivation);
+    }
+
+    #[test]
+    fn test_contract_script_generation() {
+        // create a random hashvalue
+        let hashvalue = thread_rng().gen::<[u8; 20]>();
+
+        let pub_hashlock = PublicKey::from_str(
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
+
+        let pub_timelock = PublicKey::from_str(
+            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
+        )
+        .unwrap();
+
+        // Use an u16 to strictly positive 2 byte integer
+        let locktime = rand::random::<u16>();
+
+        let contract_script =
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, hashvalue, locktime as i64);
+
+        // Get the byte encoded locktime for script
+        let locktime_bytecode = Builder::new().push_int(locktime as i64).into_script();
+
+        // Below is hand made script string that should be expected
+        let expected = "827ca914".to_owned()
+            + &hashvalue.to_hex()[..]
+            + "876321"
+            + &pub_hashlock.to_string()[..]
+            + "0120516721"
+            + &pub_timelock.to_string()[..]
+            + "00"
+            + &format!("{:x}", locktime_bytecode)
+            + "68b2757b88ac";
+
+        assert_eq!(&format!("{:x}", contract_script), &expected);
+
+        // Check data extraction from script is also working
+        assert_eq!(read_hashvalue_from_contract(&contract_script), hashvalue);
+        assert_eq!(
+            read_locktime_from_contract(&contract_script),
+            locktime as i64
+        );
+    }
+
+    #[test]
+    fn test_pubkey_extraction_from_2of2_multisig() {
+        // Create pubkeys to contruct 2of2 multi
+        let pub1 = PublicKey::from_str(
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
+
+        let pub2 = PublicKey::from_str(
+            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
+        )
+        .unwrap();
+
+        let multisig = crate::wallet_sync::create_multisig_redeemscript(&pub1, &pub2);
+
+        // Check script generation works
+        assert_eq!(format!("{:x}", multisig), "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae");
+
+        // Check pubkey fetching from the script works
+        let (fetched_pub1, fetched_pub2) =
+            read_pubkeys_from_multisig_redeemscript(&multisig).unwrap();
+
+        assert_eq!(fetched_pub1, pub1);
+        assert_eq!(fetched_pub2, pub2);
+    }
+
+    #[test]
+    fn test_find_funding_output() {
+        // Create a 20f2 multi + another random spk
+        let multisig_reedemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let another_script = Script::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
+
+        let multi_script_pubkey = Address::p2wsh(&multisig_reedemscript, NETWORK).script_pubkey();
+        let another_script_pubkey = Address::p2wsh(&another_script, NETWORK).script_pubkey();
+
+        // Create the funding transaction
+        let funding_tx = Transaction {
+            input: vec![TxIn {
+                previous_output: OutPoint::from_str(
+                    "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
+                )
+                .unwrap(),
+                sequence: 0,
+                witness: Vec::new(),
+                script_sig: Script::new(),
+            }],
+            output: vec![
+                TxOut {
+                    script_pubkey: another_script_pubkey,
+                    value: 2000,
+                },
+                TxOut {
+                    script_pubkey: multi_script_pubkey,
+                    value: 3000,
+                },
+            ],
+            lock_time: 0,
+            version: 2,
+        };
+
+        // Check the correct 2of2 multisig output is extracted from funding tx
+        assert_eq!(
+            (1u32, &funding_tx.output[1]),
+            find_funding_output(&funding_tx, &multisig_reedemscript).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_contract_tx_miscellaneous() {
+        let contract_script = Script::from(Vec::from_hex("827ca914c02fc3c5eeb7831f3a22dcc11e7b539604713a3c876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000372ad0068b2757b88ac").unwrap());
+
+        // Contract transaction spending utxo, randomly choosen
+        let spending_utxo = OutPoint::from_str(
+            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
+        )
+        .unwrap();
+
+        // Create a contract transaction spending the above utxo
+        let contract_tx = create_receivers_contract_tx(spending_utxo, 30000, &contract_script);
+
+        // Check creation matches expectation
+        let expected_tx_hex = String::from("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a00000000000000000148710000000000002200209ecbb62af70dbbb91faabe010780e3c9dc1b2b25593733a89626b3c05191cfa200000000");
+        let expected_tx: Transaction =
+            deserialize(&Vec::from_hex(&expected_tx_hex).unwrap()).unwrap();
+        assert_eq!(expected_tx, contract_tx);
+
+        // Extract contract script data
+        let hashvalue = read_hashvalue_from_contract(&contract_script);
+        let locktime = read_locktime_from_contract(&contract_script);
+        let (pub1, pub2) = read_pubkeys_from_contract_reedimscript(&contract_script).unwrap();
+
+        // Validates if contract outpoint is correct
+        println!(
+            "{:#?}",
+            is_contract_out_valid(&contract_tx.output[0], &pub1, &pub2, hashvalue, locktime)
+                .unwrap()
+        );
+
+        // Validate if the contract transaction is spending correctl utxo
+        assert!(validate_contract_tx(&contract_tx, Some(&spending_utxo), &contract_script).is_ok());
+
+        // Error Cases---------------------------------------------
+        // Check validation against wrong spending outpoint
+        assert_eq!(
+            validate_contract_tx(
+                &contract_tx,
+                Some(
+                    &OutPoint::from_str(
+                        "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:40",
+                    )
+                    .unwrap()
+                ),
+                &contract_script
+            ),
+            Err("not spending the funding outpoint")
+        );
+
+        // Push one more input in contract transaction
+        let mut contract_tx_err1 = contract_tx.clone();
+        contract_tx_err1.input.push(TxIn {
+            previous_output: OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
+            )
+            .unwrap(),
+            sequence: 0,
+            witness: Vec::new(),
+            script_sig: Script::new(),
+        });
+
+        // Verify validation fails
+        assert_eq!(
+            validate_contract_tx(&contract_tx_err1, Some(&spending_utxo), &contract_script),
+            Err("invalid number of inputs or outputs")
+        );
+
+        // Change contract transaction to pay into wrong output
+        let mut contract_tx_err2 = contract_tx.clone();
+
+        let multisig_redeemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let multi_script_pubkey = Address::p2wsh(&multisig_redeemscript, NETWORK).script_pubkey();
+
+        contract_tx_err2.output[0] = TxOut {
+            script_pubkey: multi_script_pubkey,
+            value: 3000,
+        };
+
+        // Verify validation fails
+        assert_eq!(
+            validate_contract_tx(&contract_tx_err2, Some(&spending_utxo), &contract_script),
+            Err("doesnt pay to requested contract")
+        );
+    }
+
+    #[test]
+    fn test_contract_sig_validation() {
+        // First create a funding transaction
+        let secp = Secp256k1::new();
+        let priv_1 =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+        let priv_2 =
+            PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
+
+        let pub1 = priv_1.public_key(&secp);
+        let pub2 = priv_2.public_key(&secp);
+
+        let funding_outpoint_script =
+            crate::wallet_sync::create_multisig_redeemscript(&pub1, &pub2);
+
+        let funding_spk = Address::p2sh(&funding_outpoint_script, NETWORK).script_pubkey();
+
+        let funding_tx = Transaction {
+            input: vec![TxIn {
+                // random outpoint
+                previous_output: OutPoint::from_str(
+                    "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
+                )
+                .unwrap(),
+                sequence: 0,
+                witness: Vec::new(),
+                script_sig: Script::new(),
+            }],
+            output: vec![TxOut {
+                script_pubkey: funding_spk,
+                value: 2000,
+            }],
+            lock_time: 0,
+            version: 2,
+        };
+
+        // Create the contract transaction spending the funding outpoint
+        let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+
+        let contract_script = Script::from(Vec::from_hex("827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac").unwrap());
+
+        let contract_tx = create_receivers_contract_tx(
+            funding_outpoint,
+            funding_tx.output[0].value,
+            &contract_script,
+        );
+
+        // priv1 signs the contract and verify
+        let sig1 = sign_contract_tx(
+            &contract_tx,
+            &funding_outpoint_script,
+            funding_tx.output[0].value,
+            &priv_1.key,
+        );
+
+        assert_eq!(
+            verify_contract_tx_sig(
+                &contract_tx,
+                &funding_outpoint_script,
+                funding_tx.output[0].value,
+                &pub1,
+                &sig1
+            ),
+            true
+        );
+
+        // priv2 signs the contract and verify
+        let sig2 = sign_contract_tx(
+            &contract_tx,
+            &funding_outpoint_script,
+            funding_tx.output[0].value,
+            &priv_2.key,
+        );
+
+        assert!(verify_contract_tx_sig(
+            &contract_tx,
+            &funding_outpoint_script,
+            funding_tx.output[0].value,
+            &pub2,
+            &sig2
+        ));
+    }
+}
