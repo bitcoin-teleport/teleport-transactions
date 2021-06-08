@@ -785,10 +785,9 @@ mod test {
         let (pub1, pub2) = read_pubkeys_from_contract_reedimscript(&contract_script).unwrap();
 
         // Validates if contract outpoint is correct
-        println!(
-            "{:#?}",
+        assert!(
             is_contract_out_valid(&contract_tx.output[0], &pub1, &pub2, hashvalue, locktime)
-                .unwrap()
+                .is_ok()
         );
 
         // Validate if the contract transaction is spending correctl utxo

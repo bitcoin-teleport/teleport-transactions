@@ -13,10 +13,8 @@ use std::collections::HashMap;
 
 use itertools::izip;
 
-extern crate bitcoin_wallet;
 use bitcoin_wallet::mnemonic;
 
-extern crate bitcoin;
 use bitcoin::{
     blockdata::{
         opcodes::all,
@@ -34,7 +32,6 @@ use bitcoin::{
     Address, Amount, Network, OutPoint, SigHashType, Transaction, TxIn, TxOut, Txid,
 };
 
-extern crate bitcoincore_rpc;
 use bitcoincore_rpc::json::{
     ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
     ListUnspentResultEntry, WalletCreateFundedPsbtOptions,
@@ -75,9 +72,9 @@ struct WalletFileData {
 
 pub struct Wallet {
     master_key: ExtendedPrivKey,
-    wallet_file_name: String,
-    external_index: u32,
-    swap_coins: HashMap<Script, WalletSwapCoin>,
+    pub wallet_file_name: String,
+    pub external_index: u32,
+    pub swap_coins: HashMap<Script, WalletSwapCoin>,
 }
 
 pub enum CoreAddressLabelType {
