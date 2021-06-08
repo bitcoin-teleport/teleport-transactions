@@ -1,3 +1,7 @@
+extern crate bitcoin;
+extern crate bitcoin_wallet;
+extern crate bitcoincore_rpc;
+
 use dirs::home_dir;
 use std::io;
 use std::path::PathBuf;
@@ -297,4 +301,198 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use bitcoin::util::amount::Amount;
+    use serde_json::Value;
+    use std::{thread, time};
+    use tokio::io::AsyncWriteExt;
+
+    use std::str::FromStr;
+
+    use super::*;
+
+    static TAKER: &str = "tests/taker-wallet";
+    static MAKER1: &str = "tests/maker-wallet-1";
+    static MAKER2: &str = "tests/maker-wallet-2";
+
+    // Helper function to create new wallet
+    fn create_wallet_and_import(rpc: &Client, filename: PathBuf) -> Wallet {
+        let mnemonic =
+            mnemonic::Mnemonic::new_random(bitcoin_wallet::account::MasterKeyEntropy::Sufficient)
+                .unwrap();
+
+        Wallet::save_new_wallet_file(&filename, mnemonic.to_string(), "".to_string()).unwrap();
+
+        let wallet = Wallet::load_wallet_from_file(filename).unwrap();
+        // import intital addresses to core
+        wallet.import_initial_addresses(
+            &rpc,
+            &wallet
+                .get_hd_wallet_descriptors(&rpc)
+                .iter()
+                .collect::<Vec<&String>>(),
+            &Vec::<_>::new(),
+        );
+
+        wallet
+    }
+
+    pub fn generate_1_block(rpc: &Client) {
+        rpc.generate_to_address(1, &rpc.get_new_address(None, None).unwrap())
+            .unwrap();
+    }
+
+    async fn kill_maker(addr: &str) {
+        // Need to connect twice by a delay to stop maker
+        // The outer loop in [maker_protocol::run()] iterates
+        // immediately upon connecting a client,
+        // The first iteration doesn't register kill signal
+        // Signal registers in the 2nd iteration when a new client connects
+        {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let (_, mut writer) = stream.split();
+
+            writer.write_all(b"kill").await.unwrap();
+        }
+        thread::sleep(time::Duration::from_secs(5));
+        {
+            tokio::net::TcpStream::connect(addr).await.unwrap();
+        }
+    }
+
+    // This test requires a bitcoin regtest node running in local machine with a
+    // wallet name `teleport` loaded and have enough balance to execute transactions.
+    #[tokio::test]
+    async fn test_standard_coin_swap() {
+        let rpc = get_bitcoin_rpc().unwrap();
+
+        // unlock all utxos to avoid "insufficient fund" error
+        rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
+            .unwrap();
+
+        // create taker wallet
+        let mut taker = create_wallet_and_import(&rpc, TAKER.into());
+
+        // create maker1 wallet
+        let mut maker1 = create_wallet_and_import(&rpc, MAKER1.into());
+
+        // create maker2 wallet
+        let mut maker2 = create_wallet_and_import(&rpc, MAKER2.into());
+
+        // Check files are created
+        assert!(std::path::Path::new(TAKER).exists());
+        assert!(std::path::Path::new(MAKER1).exists());
+        assert!(std::path::Path::new(MAKER2).exists());
+
+        // Create 3 taker and maker address and send 0.05 btc to each
+        for _ in 0..3 {
+            let taker_address = taker.get_next_external_address(&rpc);
+            let maker1_address = maker1.get_next_external_address(&rpc);
+            let maker2_address = maker2.get_next_external_address(&rpc);
+
+            rpc.send_to_address(
+                &taker_address,
+                Amount::from_btc(0.05).unwrap(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rpc.send_to_address(
+                &maker1_address,
+                Amount::from_btc(0.05).unwrap(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rpc.send_to_address(
+                &maker2_address,
+                Amount::from_btc(0.05).unwrap(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        }
+
+        generate_1_block(&rpc);
+
+        // Check inital wallet assertions
+        assert_eq!(taker.external_index, 3);
+        assert_eq!(maker1.external_index, 3);
+        assert_eq!(maker2.external_index, 3);
+
+        assert_eq!(taker.list_unspent_from_wallet(&rpc).unwrap().len(), 3);
+        assert_eq!(maker1.list_unspent_from_wallet(&rpc).unwrap().len(), 3);
+        assert_eq!(maker2.list_unspent_from_wallet(&rpc).unwrap().len(), 3);
+
+        assert_eq!(taker.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
+        assert_eq!(maker1.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
+        assert_eq!(maker2.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
+
+        // Start threads and execute swaps
+        let maker1_thread = thread::spawn(|| {
+            run_maker(&PathBuf::from_str(MAKER1).unwrap(), 6102);
+        });
+
+        let maker2_thread = thread::spawn(|| {
+            run_maker(&PathBuf::from_str(MAKER2).unwrap(), 16102);
+        });
+
+        let taker_thread = thread::spawn(|| {
+            // Wait and then start the taker
+            thread::sleep(time::Duration::from_secs(5));
+            run_taker(&PathBuf::from_str(TAKER).unwrap());
+        });
+
+        taker_thread.join().unwrap();
+
+        kill_maker("127.0.0.1:6102").await;
+
+        kill_maker("127.0.0.1:16102").await;
+
+        maker1_thread.join().unwrap();
+
+        maker2_thread.join().unwrap();
+
+        // Recreate the wallet
+        let taker = Wallet::load_wallet_from_file(&TAKER).unwrap();
+        let maker1 = Wallet::load_wallet_from_file(&MAKER1).unwrap();
+        let maker2 = Wallet::load_wallet_from_file(&MAKER2).unwrap();
+
+        // Check assertions
+        assert_eq!(taker.swap_coins.len(), 3);
+        assert_eq!(maker1.swap_coins.len(), 6);
+        assert_eq!(maker2.swap_coins.len(), 6);
+
+        let rpc = get_bitcoin_rpc().unwrap();
+
+        let utxos = taker.list_unspent_from_wallet(&rpc).unwrap();
+        let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+        assert_eq!(utxos.len(), 6);
+        assert!(balance < Amount::from_btc(0.15).unwrap());
+
+        let utxos = maker1.list_unspent_from_wallet(&rpc).unwrap();
+        let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+        assert_eq!(utxos.len(), 6);
+        assert!(balance > Amount::from_btc(0.15).unwrap());
+
+        let utxos = maker2.list_unspent_from_wallet(&rpc).unwrap();
+        let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+        assert_eq!(utxos.len(), 6);
+        assert!(balance > Amount::from_btc(0.15).unwrap());
+    }
 }
