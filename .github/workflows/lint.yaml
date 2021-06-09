@@ -1,12 +1,12 @@
 
 on: [push, pull_request]
 
-name: Lint Checking
+name: lint
 
 jobs:
 
   fmt:
-    name: Rust fmt
+    name: rust fmt
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

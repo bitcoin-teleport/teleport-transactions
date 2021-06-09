@@ -68,7 +68,17 @@ async fn run(
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     println!("listening on port {}", port);
 
+    #[cfg(test)]
+    let shutdown = Arc::new(RwLock::new(false));
+
     loop {
+        #[cfg(test)]
+        let c_shutdown = Arc::clone(&shutdown);
+        #[cfg(test)]
+        if *c_shutdown.read().unwrap() {
+            return Ok(());
+        }
+
         let (mut socket, address) = listener.accept().await?;
         println!("accepted connection from {:?}", address);
 
@@ -108,8 +118,15 @@ async fn run(
                         break;
                     }
                 };
-                line = line.trim_end().to_string();
+                #[cfg(test)]
+                if line == "kill".to_string() {
+                    println!("Kill signal received, stopping maker....");
+                    let mut w = c_shutdown.write().unwrap();
+                    *w = true;
+                    break;
+                }
 
+                line = line.trim_end().to_string();
                 let message_result = handle_message(
                     line,
                     &mut connection_state,

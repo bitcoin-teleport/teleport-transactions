@@ -1,11 +1,11 @@
 on: [push, pull_request]
 
-name: Continuous Integration
+name: continuous_builds
 
 jobs:
 
-  build_and_test:
-    name: Build and Test
+  build:
+    name: Build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -40,5 +40,3 @@ jobs:
         # Uncomment clippy check after failures are removed
       # - name: Clippy
       #   run: cargo clippy --all-targets --features ${{ matrix.features }} --no-default-features -- -D warnings
-      - name: Test
-        run: cargo test --features ${{ matrix.features }} --no-default-features

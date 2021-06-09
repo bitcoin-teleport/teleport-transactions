@@ -1,10 +1,10 @@
 on: [push, pull_request]
 
-name: Code Coverage
+name: test_codecov
 
 jobs:
-  Code-coverage:
-    name: Code coverage report
+  test_with_codecov:
+    name: Run tests with coverage reporting
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -15,6 +15,33 @@ jobs:
       - name: Set profile
         run: rustup set profile minimal
 
+      - name: Install bitcoind
+        run: | 
+          wget https://bitcoincore.org/bin/bitcoin-core-0.21.1/bitcoin-0.21.1-x86_64-linux-gnu.tar.gz 
+          tar -xvf bitcoin-0.21.1-x86_64-linux-gnu.tar.gz 
+          sudo cp bitcoin-0.21.1/bin/* /usr/local/bin 
+          which bitcoind
+
+        # bitcoind setups are required for integration test
+        # TODO: Separate unit and integration tests to different process.
+      - name: Run and bitcoind
+        run: |
+          mkdir -p .bitcoin
+          cp .github/bitcoin.conf .bitcoin/
+          bitcoind -daemon -datadir=.bitcoin
+
+      - name: Sleep for 5 secs # Wait until bitcoind starts
+        uses: juliangruber/sleep-action@v1
+        with:
+          time: 5s
+      
+      - name: Setup core wallet
+        run: | 
+          bitcoin-cli -datadir=.bitcoin createwallet teleport
+          addrs=$(bitcoin-cli -datadir=.bitcoin getnewaddress)
+          bitcoin-cli -datadir=.bitcoin generatetoaddress 101 $addrs
+
+      # Tests are run with code coverage support
       - name: Run cargo test
         env:
           CARGO_INCREMENTAL: '0'
@@ -24,7 +51,8 @@ jobs:
       - id: coverage
         name: Generate coverage
         uses: actions-rs/grcov@v0.1.5
-        
+      
+      # Upload coverage report
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v1
         with:

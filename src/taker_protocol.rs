@@ -35,6 +35,10 @@ use crate::messages::{
     SendersAndReceiversContractSigs, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage,
 };
+
+#[cfg(test)]
+use crate::get_bitcoin_rpc;
+
 use crate::offerbook_sync::{sync_offerbook, OfferAddress};
 use crate::wallet_sync::{generate_keypair, CoreAddressLabelType, Wallet, WalletSwapCoin};
 
@@ -637,6 +641,8 @@ async fn wait_for_funding_tx_confirmation(
             break;
         }
         sleep(Duration::from_millis(1000)).await;
+        #[cfg(test)]
+        crate::test::generate_1_block(&get_bitcoin_rpc().unwrap());
     }
     println!("funding transactions confirmed");
 

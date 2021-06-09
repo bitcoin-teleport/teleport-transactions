@@ -13,10 +13,8 @@ use std::collections::HashMap;
 
 use itertools::izip;
 
-extern crate bitcoin_wallet;
 use bitcoin_wallet::mnemonic;
 
-extern crate bitcoin;
 use bitcoin::{
     blockdata::{
         opcodes::all,
@@ -34,7 +32,6 @@ use bitcoin::{
     Address, Amount, Network, OutPoint, SigHashType, Transaction, TxIn, TxOut, Txid,
 };
 
-extern crate bitcoincore_rpc;
 use bitcoincore_rpc::json::{
     ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
     ListUnspentResultEntry, WalletCreateFundedPsbtOptions,
@@ -259,6 +256,11 @@ impl Wallet {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub fn get_external_index(&self) -> u32 {
+        self.external_index
+    }
+
     pub fn update_swap_coins_list(&self) -> io::Result<()> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
         wallet_file_data.swap_coins = self
@@ -292,6 +294,11 @@ impl Wallet {
                 Err("error writing to disk")
             }
         }
+    }
+
+    #[cfg(test)]
+    pub fn get_swap_coins_count(&self) -> usize {
+        self.swap_coins.len()
     }
 
     //this function is used in two places
