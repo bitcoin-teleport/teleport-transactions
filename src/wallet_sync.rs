@@ -72,9 +72,9 @@ struct WalletFileData {
 
 pub struct Wallet {
     master_key: ExtendedPrivKey,
-    pub wallet_file_name: String,
-    pub external_index: u32,
-    pub swap_coins: HashMap<Script, WalletSwapCoin>,
+    wallet_file_name: String,
+    external_index: u32,
+    swap_coins: HashMap<Script, WalletSwapCoin>,
 }
 
 pub enum CoreAddressLabelType {
@@ -256,6 +256,11 @@ impl Wallet {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub fn get_external_index(&self) -> u32 {
+        self.external_index
+    }
+
     pub fn update_swap_coins_list(&self) -> io::Result<()> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
         wallet_file_data.swap_coins = self
@@ -289,6 +294,11 @@ impl Wallet {
                 Err("error writing to disk")
             }
         }
+    }
+
+    #[cfg(test)]
+    pub fn get_swap_coins_count(&self) -> usize {
+        self.swap_coins.len()
     }
 
     //this function is used in two places

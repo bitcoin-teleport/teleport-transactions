@@ -431,9 +431,9 @@ mod test {
         generate_1_block(&rpc);
 
         // Check inital wallet assertions
-        assert_eq!(taker.external_index, 3);
-        assert_eq!(maker1.external_index, 3);
-        assert_eq!(maker2.external_index, 3);
+        assert_eq!(taker.get_external_index(), 3);
+        assert_eq!(maker1.get_external_index(), 3);
+        assert_eq!(maker2.get_external_index(), 3);
 
         assert_eq!(taker.list_unspent_from_wallet(&rpc).unwrap().len(), 3);
         assert_eq!(maker1.list_unspent_from_wallet(&rpc).unwrap().len(), 3);
@@ -474,9 +474,9 @@ mod test {
         let maker2 = Wallet::load_wallet_from_file(&MAKER2).unwrap();
 
         // Check assertions
-        assert_eq!(taker.swap_coins.len(), 3);
-        assert_eq!(maker1.swap_coins.len(), 6);
-        assert_eq!(maker2.swap_coins.len(), 6);
+        assert_eq!(taker.get_swap_coins_count(), 3);
+        assert_eq!(maker1.get_swap_coins_count(), 6);
+        assert_eq!(maker2.get_swap_coins_count(), 6);
 
         let rpc = get_bitcoin_rpc().unwrap();
 
