@@ -358,11 +358,6 @@ mod test {
     }
 
     async fn kill_maker(addr: &str) {
-        // Need to connect twice by a delay to stop maker
-        // The outer loop in [maker_protocol::run()] iterates
-        // immediately upon connecting a client,
-        // The first iteration doesn't register kill signal
-        // Signal registers in the 2nd iteration when a new client connects
         {
             let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
             let (_, mut writer) = stream.split();
@@ -370,9 +365,6 @@ mod test {
             writer.write_all(b"kill").await.unwrap();
         }
         thread::sleep(time::Duration::from_secs(5));
-        {
-            tokio::net::TcpStream::connect(addr).await.unwrap();
-        }
     }
 
     // This test requires a bitcoin regtest node running in local machine with a

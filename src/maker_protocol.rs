@@ -5,6 +5,9 @@ use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 
+use tokio::select;
+use tokio::sync::mpsc;
+
 use serde_json::Value;
 
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
@@ -64,20 +67,20 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     println!("listening on port {}", port);
 
-    #[cfg(test)]
-    let shutdown = Arc::new(RwLock::new(false));
-
+    let (server_end_tx, mut server_end_rx) = mpsc::channel::<()>(100);
     loop {
-        #[cfg(test)]
-        let c_shutdown = Arc::clone(&shutdown);
-        #[cfg(test)]
-        if *c_shutdown.read().unwrap() {
-            return Ok(());
+        let server_end_tx = server_end_tx.clone();
+        let new_client = select! {
+            _ = server_end_rx.recv() => None,
+            a = listener.accept() => Some(a?)
+        };
+        if new_client.is_none() {
+            println!("got signal to end server");
+            break;
         }
 
-        let (mut socket, address) = listener.accept().await?;
-        println!("accepted connection from {:?}", address);
-
+        let (mut socket, addr) = new_client.unwrap();
+        println!("accepted connection from {:?}", addr);
         let client_rpc = Arc::clone(&rpc);
         let client_wallet = Arc::clone(&wallet);
 
@@ -116,9 +119,8 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 };
                 #[cfg(test)]
                 if line == "kill".to_string() {
+                    server_end_tx.send(()).await.unwrap();
                     println!("Kill signal received, stopping maker....");
-                    let mut w = c_shutdown.write().unwrap();
-                    *w = true;
                     break;
                 }
 
@@ -145,6 +147,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
             }
         });
     }
+    Ok(())
 }
 
 fn handle_message(
