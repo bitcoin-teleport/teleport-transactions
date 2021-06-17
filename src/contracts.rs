@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use std::array::TryFromSliceError;
 use std::convert::TryInto;
 
 use bitcoin::{
@@ -19,6 +20,7 @@ use bitcoincore_rpc::{Client, RpcApi};
 use rand::rngs::OsRng;
 use rand::RngCore;
 
+use crate::error::Error;
 use crate::messages::ConfirmedCoinSwapTxInfo;
 use crate::wallet_sync::{create_multisig_redeemscript, Wallet, WalletSwapCoin, NETWORK};
 
@@ -45,29 +47,31 @@ pub trait SwapCoin {
     fn get_funding_amount(&self) -> u64;
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str>;
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error>;
 }
 
 pub fn calculate_maker_pubkey_from_nonce(
     tweakable_point: PublicKey,
     nonce: SecretKey,
-) -> PublicKey {
+) -> Result<PublicKey, secp256k1::Error> {
     let secp = Secp256k1::new();
 
     let nonce_point = secp256k1::PublicKey::from_secret_key(&secp, &nonce);
-    PublicKey {
+    Ok(PublicKey {
         compressed: true,
-        key: tweakable_point.key.combine(&nonce_point).unwrap(),
-    }
+        key: tweakable_point.key.combine(&nonce_point)?,
+    })
 }
 
-pub fn derive_maker_pubkey_and_nonce(tweakable_point: PublicKey) -> (PublicKey, SecretKey) {
+pub fn derive_maker_pubkey_and_nonce(
+    tweakable_point: PublicKey,
+) -> Result<(PublicKey, SecretKey), secp256k1::Error> {
     let mut nonce_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = SecretKey::from_slice(&nonce_bytes).unwrap();
-    let maker_pubkey = calculate_maker_pubkey_from_nonce(tweakable_point, nonce);
+    let nonce = SecretKey::from_slice(&nonce_bytes)?;
+    let maker_pubkey = calculate_maker_pubkey_from_nonce(tweakable_point, nonce)?;
 
-    (maker_pubkey, nonce)
+    Ok((maker_pubkey, nonce))
 }
 
 #[rustfmt::skip]
@@ -101,31 +105,33 @@ pub fn create_contract_redeemscript(
 }
 
 //TODO put all these magic numbers in a const or something
-pub fn read_hashvalue_from_contract(redeemscript: &Script) -> [u8; 20] {
-    redeemscript.to_bytes()[4..24]
-        .try_into()
-        .expect("incorrect length")
+pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<[u8; 20], TryFromSliceError> {
+    redeemscript.to_bytes()[4..24].try_into()
 }
 
-pub fn read_locktime_from_contract(redeemscript: &Script) -> i64 {
+fn read_locktime_from_contract(redeemscript: &Script) -> Option<i64> {
     //note that locktimes in these contracts are always 2 bytes
     //so for example a locktime of 30 wont work, as the specific single opcode
     //will be used instead
     let rs = redeemscript.to_bytes();
-    rs[100] as i64 | (rs[101] as i64) << 8
+    if rs.len() > 101 {
+        Some(rs[100] as i64 | (rs[101] as i64) << 8)
+    } else {
+        None
+    }
 }
 
 pub fn read_pubkeys_from_multisig_redeemscript(
     redeemscript: &Script,
-) -> Result<(PublicKey, PublicKey), &'static str> {
+) -> Option<(PublicKey, PublicKey)> {
     let ms_rs_bytes = redeemscript.to_bytes();
     //TODO put these magic numbers in consts, PUBKEY1_OFFSET maybe
     let pubkey1 = PublicKey::from_slice(&ms_rs_bytes[2..35]);
     let pubkey2 = PublicKey::from_slice(&ms_rs_bytes[36..69]);
     if pubkey1.is_err() || pubkey2.is_err() {
-        return Err("invalid pubkeys");
+        return None;
     }
-    Ok((pubkey1.unwrap(), pubkey2.unwrap()))
+    Some((pubkey1.unwrap(), pubkey2.unwrap()))
 }
 
 pub fn create_senders_contract_tx(
@@ -167,10 +173,10 @@ fn is_contract_out_valid(
     timelock_pubkey: &PublicKey,
     hashvalue: [u8; 20],
     locktime: i64,
-) -> Result<(), &'static str> {
+) -> Result<(), Error> {
     let minimum_locktime = 2; //TODO should be in config file or something
     if minimum_locktime > locktime {
-        return Err("locktime too short");
+        return Err(Error::Protocol("locktime too short"));
     }
 
     let redeemscript_from_request =
@@ -178,7 +184,9 @@ fn is_contract_out_valid(
     let contract_spk_from_request =
         Address::p2wsh(&redeemscript_from_request, NETWORK).script_pubkey();
     if contract_output.script_pubkey != contract_spk_from_request {
-        return Err("given transaction does not pay to requested contract");
+        return Err(Error::Protocol(
+            "given transaction does not pay to requested contract",
+        ));
     }
     Ok(())
 }
@@ -196,27 +204,24 @@ pub fn validate_and_sign_senders_contract_tx(
     locktime: i64,
     tweakable_privkey: &SecretKey,
     wallet: &mut Wallet,
-) -> Result<Signature, &'static str> {
+) -> Result<Signature, Error> {
     if senders_contract_tx.input.len() != 1 || senders_contract_tx.output.len() != 1 {
-        return Err("invalid number of inputs or outputs");
+        return Err(Error::Protocol("invalid number of inputs or outputs"));
     }
-
-    match wallet.does_prevout_match_cached_contract(
+    if !wallet.does_prevout_match_cached_contract(
         &senders_contract_tx.input[0].previous_output,
         &senders_contract_tx.output[0].script_pubkey,
-    ) {
-        Ok(valid_from_cache) if !valid_from_cache => {
-            return Err("taker attempting multiple contract attack, rejecting");
-        }
-        Err(_e) => return Err("wallet io error"),
-        Ok(_valid_from_cache) => (),
-    };
+    )? {
+        return Err(Error::Protocol(
+            "taker attempting multiple contract attack, rejecting",
+        ));
+    }
 
     let secp = Secp256k1::new();
     let mut hashlock_privkey_from_nonce = *tweakable_privkey;
     hashlock_privkey_from_nonce
         .add_assign(hashlock_key_nonce.as_ref())
-        .unwrap(); //TODO malicious taker could use this to crash maker
+        .map_err(|_| Error::Protocol("error with hashlock tweakable privkey + hashlock nonce"))?;
     let hashlock_pubkey_from_nonce = PublicKey {
         compressed: true,
         key: secp256k1::PublicKey::from_secret_key(&secp, &hashlock_privkey_from_nonce),
@@ -230,24 +235,23 @@ pub fn validate_and_sign_senders_contract_tx(
         locktime,
     )?; //note question mark here propagating the error upwards
 
-    wallet
-        .add_prevout_and_contract_to_cache(
-            senders_contract_tx.input[0].previous_output,
-            senders_contract_tx.output[0].script_pubkey.clone(),
-        )
-        .unwrap();
+    wallet.add_prevout_and_contract_to_cache(
+        senders_contract_tx.input[0].previous_output,
+        senders_contract_tx.output[0].script_pubkey.clone(),
+    )?;
 
     let mut multisig_privkey_from_nonce = *tweakable_privkey;
     multisig_privkey_from_nonce
         .add_assign(multisig_key_nonce.as_ref())
-        .unwrap();
+        .map_err(|_| Error::Protocol("error with multisig tweakable privkey + multisig nonce"))?;
 
     Ok(sign_contract_tx(
         &senders_contract_tx,
         &multisig_redeemscript,
         funding_input_value,
         &multisig_privkey_from_nonce,
-    ))
+    )
+    .map_err(|_| Error::Protocol("error with signing contract tx"))?)
 }
 
 pub fn find_funding_output<'a>(
@@ -272,19 +276,16 @@ pub fn verify_proof_of_funding(
     funding_info: &ConfirmedCoinSwapTxInfo,
     funding_output_index: u32,
     next_locktime: i64,
-) -> Result<Option<(SecretKey, PublicKey)>, bitcoincore_rpc::Error> {
+) -> Result<(SecretKey, PublicKey), Error> {
     //check the funding_tx exists and was really confirmed
     if let Some(txout) =
         rpc.get_tx_out(&funding_info.funding_tx.txid(), funding_output_index, None)?
     {
         if txout.confirmations < 1 {
-            println!("not confirmed");
-            return Ok(None);
+            return Err(Error::Protocol("funding tx not confirmed"));
         }
     } else {
-        //output doesnt exist
-        println!("output doesnt exist");
-        return Ok(None);
+        return Err(Error::Protocol("output doesnt exist"));
     }
 
     //pattern match to check redeemscript is really a 2of2 multisig
@@ -294,97 +295,86 @@ pub fn verify_proof_of_funding(
     let template_ms_rs =
         create_multisig_redeemscript(&pubkey_placeholder, &pubkey_placeholder).into_bytes();
     if ms_rs_bytes.len() != template_ms_rs.len() {
-        println!("wrong rs length");
-        return Ok(None);
+        return Err(Error::Protocol("wrong multisig_redeemscript length"));
     }
     ms_rs_bytes.splice(2..35, PUB_PLACEHOLDER.iter().cloned());
     ms_rs_bytes.splice(36..69, PUB_PLACEHOLDER.iter().cloned());
     if ms_rs_bytes != template_ms_rs {
-        println!("rs template not matching");
-        return Ok(None);
+        return Err(Error::Protocol(
+            "multisig_redeemscript not matching template",
+        ));
     }
 
     //check my pubkey is one of the pubkeys in the redeemscript
     let (pubkey1, pubkey2) =
-        read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript).unwrap();
+        read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)
+            .ok_or(Error::Protocol("invalid multisig_redeemscript"))?;
     let (tweakable_privkey, tweakable_point) = wallet.get_tweakable_keypair();
     let my_pubkey =
-        calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.multisig_key_nonce);
+        calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.multisig_key_nonce)
+            .map_err(|_| Error::Protocol("unable to calculate maker pubkey from nonce"))?;
     if pubkey1 != my_pubkey && pubkey2 != my_pubkey {
-        println!("wrong pubkeys");
-        return Ok(None);
+        return Err(Error::Protocol("wrong pubkeys in multisig_redeemscript"));
     }
 
     //check that the new locktime is sufficently short enough compared to the
     //locktime in the provided funding tx
-    let locktime = read_locktime_from_contract(&funding_info.contract_redeemscript);
+    let locktime = read_locktime_from_contract(&funding_info.contract_redeemscript)
+        .ok_or(Error::Protocol("unable to read locktime from contract"))?;
     //this is the time the maker or his watchtowers have to be online, read
     // the hash preimage from the blockchain and broadcast their own tx
     //TODO put this in a config file perhaps, and have it advertised to takers
     const CONTRACT_REACT_TIME: i64 = 3;
     if locktime - next_locktime < CONTRACT_REACT_TIME {
-        println!(
-            "locktime too short, locktime={} next_locktime={}",
-            locktime, next_locktime
-        );
-        return Ok(None);
+        return Err(Error::Protocol("locktime too short"));
     }
 
     //check that the provided contract matches the scriptpubkey from the
     //cache which was populated when the signsendercontracttx message arrived
     let contract_spk = Address::p2wsh(&funding_info.contract_redeemscript, NETWORK).script_pubkey();
-    match wallet.does_prevout_match_cached_contract(
+
+    if !wallet.does_prevout_match_cached_contract(
         &OutPoint {
             txid: funding_info.funding_tx.txid(),
             vout: funding_output_index,
         },
         &contract_spk,
-    ) {
-        Ok(valid_from_cache) if !valid_from_cache => {
-            //provided contract does not match sender contract tx, rejecting
-            println!("provided contract does not match sender contract tx, rejecting");
-            return Ok(None);
-        }
-        Err(_e) => {
-            return Err(bitcoincore_rpc::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "wallet file io",
-            )))
-        }
-        Ok(_valid_from_cache) => (),
-    };
+    )? {
+        return Err(Error::Protocol(
+            "provided contract does not match sender contract tx, rejecting",
+        ));
+    }
 
     let mut my_privkey = tweakable_privkey;
-    //TODO error handle
     my_privkey
         .add_assign(funding_info.multisig_key_nonce.as_ref())
-        .unwrap();
+        .map_err(|_| Error::Protocol("error with wallet tweakable privkey + nonce"))?;
 
     let other_pubkey = if pubkey1 == my_pubkey {
         pubkey2
     } else {
         pubkey1
     };
-    Ok(Some((my_privkey, other_pubkey)))
+    Ok((my_privkey, other_pubkey))
 }
 
 pub fn validate_contract_tx(
     receivers_contract_tx: &Transaction,
     funding_outpoint: Option<&OutPoint>,
     contract_redeemscript: &Script,
-) -> Result<(), &'static str> {
+) -> Result<(), Error> {
     if receivers_contract_tx.input.len() != 1 || receivers_contract_tx.output.len() != 1 {
-        return Err("invalid number of inputs or outputs");
+        return Err(Error::Protocol("invalid number of inputs or outputs"));
     }
     if funding_outpoint.is_some()
         && receivers_contract_tx.input[0].previous_output != *funding_outpoint.unwrap()
     {
-        return Err("not spending the funding outpoint");
+        return Err(Error::Protocol("not spending the funding outpoint"));
     }
     if receivers_contract_tx.output[0].script_pubkey
         != Address::p2wsh(&contract_redeemscript, NETWORK).script_pubkey()
     {
-        return Err("doesnt pay to requested contract");
+        return Err(Error::Protocol("doesnt pay to requested contract"));
     }
     Ok(())
 }
@@ -394,7 +384,7 @@ pub fn sign_contract_tx(
     multisig_redeemscript: &Script,
     funding_amount: u64,
     privkey: &SecretKey,
-) -> Signature {
+) -> Result<Signature, secp256k1::Error> {
     let input_index = 0;
     let sighash = Message::from_slice(
         &SigHashCache::new(contract_tx).signature_hash(
@@ -403,10 +393,9 @@ pub fn sign_contract_tx(
             funding_amount,
             SigHashType::All,
         )[..],
-    )
-    .unwrap();
+    )?;
     let secp = Secp256k1::new();
-    secp.sign(&sighash, privkey)
+    Ok(secp.sign(&sighash, privkey))
 }
 
 fn verify_contract_tx_sig(
@@ -421,15 +410,17 @@ fn verify_contract_tx_sig(
     //similar https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-26895
 
     let input_index = 0;
-    let sighash = Message::from_slice(
+    let sighash = match Message::from_slice(
         &SigHashCache::new(contract_tx).signature_hash(
             input_index,
             multisig_redeemscript,
             funding_amount,
             SigHashType::All,
         )[..],
-    )
-    .unwrap();
+    ) {
+        Ok(sig) => sig,
+        Err(_) => return false,
+    };
     let secp = Secp256k1::new();
     secp.verify(&sighash, sig, &pubkey.key).is_ok()
 }
@@ -466,14 +457,14 @@ impl SwapCoin for WalletSwapCoin {
         self.verify_contract_tx_sig(sig)
     }
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
             key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
         };
         if pubkey != self.other_pubkey {
-            return Err("not correct privkey");
+            return Err(Error::Protocol("not correct privkey"));
         }
         self.other_privkey = Some(privkey);
         Ok(())
@@ -482,14 +473,18 @@ impl SwapCoin for WalletSwapCoin {
 
 impl WalletSwapCoin {
     //"_with_my_privkey" as opposed to with other_privkey
-    pub fn sign_contract_tx_with_my_privkey(&self, contract_tx: &Transaction) -> Signature {
+    pub fn sign_contract_tx_with_my_privkey(
+        &self,
+        contract_tx: &Transaction,
+    ) -> Result<Signature, Error> {
         let multisig_redeemscript = self.get_multisig_redeemscript();
-        sign_contract_tx(
+        Ok(sign_contract_tx(
             contract_tx,
             &multisig_redeemscript,
             self.funding_amount,
             &self.my_privkey,
         )
+        .map_err(|_| Error::Protocol("error with signing contract tx"))?)
     }
 
     pub fn verify_contract_tx_sig(&self, sig: &Signature) -> bool {
@@ -543,7 +538,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         )
     }
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), &'static str> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
@@ -552,7 +547,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
             Ok(())
         } else {
-            Err("privkey invalid")
+            Err(Error::Protocol("not correct privkey"))
         }
     }
 }
@@ -564,10 +559,13 @@ impl WatchOnlySwapCoin {
         contract_tx: Transaction,
         contract_redeemscript: Script,
         funding_amount: u64,
-    ) -> Result<WatchOnlySwapCoin, &'static str> {
-        let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)?;
+    ) -> Result<WatchOnlySwapCoin, Error> {
+        let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)
+            .ok_or(Error::Protocol("invalid pubkeys in multisig_redeemscript"))?;
         if pubkey1 != receiver_pubkey && pubkey2 != receiver_pubkey {
-            return Err("given sender_pubkey not included in redeemscript");
+            return Err(Error::Protocol(
+                "given sender_pubkey not included in redeemscript",
+            ));
         }
         let sender_pubkey = if pubkey1 == receiver_pubkey {
             pubkey2
@@ -612,39 +610,28 @@ mod test {
         let secp = Secp256k1::new();
         let sk =
             PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
-
         let pubkey = sk.public_key(&secp);
-
         let nonce = SecretKey::from_slice(&[2; 32]).unwrap();
-
-        let maker_key_computed = calculate_maker_pubkey_from_nonce(pubkey, nonce);
-
+        let maker_key_computed = calculate_maker_pubkey_from_nonce(pubkey, nonce).unwrap();
         let expected_pubkey = PublicKey::from_str(
             "03bf98c86c3d536136378cf43ac42861ece609de87f5a44e19b730e8e9bd791938",
         )
         .unwrap();
-
         assert_eq!(expected_pubkey, maker_key_computed);
     }
 
     #[test]
     fn test_maker_pubkey_nonce_derviation() {
         let secp = Secp256k1::new();
-
         let privkey_org =
             PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
-
         let pubkey_org = privkey_org.public_key(&secp);
-
-        let (pubkey_derived, nonce) = derive_maker_pubkey_and_nonce(pubkey_org.clone());
-
+        let (pubkey_derived, nonce) = derive_maker_pubkey_and_nonce(pubkey_org.clone()).unwrap();
         let nonce_point = secp256k1::PublicKey::from_secret_key(&secp, &nonce);
-
         let expected_derivation = PublicKey {
             compressed: true,
             key: pubkey_org.key.combine(&nonce_point).unwrap(),
         };
-
         assert_eq!(pubkey_derived, expected_derivation);
     }
 
@@ -686,9 +673,12 @@ mod test {
         assert_eq!(&format!("{:x}", contract_script), &expected);
 
         // Check data extraction from script is also working
-        assert_eq!(read_hashvalue_from_contract(&contract_script), hashvalue);
         assert_eq!(
-            read_locktime_from_contract(&contract_script),
+            read_hashvalue_from_contract(&contract_script).unwrap(),
+            hashvalue
+        );
+        assert_eq!(
+            read_locktime_from_contract(&contract_script).unwrap(),
             locktime as i64
         );
     }
@@ -780,8 +770,8 @@ mod test {
         assert_eq!(expected_tx, contract_tx);
 
         // Extract contract script data
-        let hashvalue = read_hashvalue_from_contract(&contract_script);
-        let locktime = read_locktime_from_contract(&contract_script);
+        let hashvalue = read_hashvalue_from_contract(&contract_script).unwrap();
+        let locktime = read_locktime_from_contract(&contract_script).unwrap();
         let (pub1, pub2) = read_pubkeys_from_contract_reedimscript(&contract_script).unwrap();
 
         // Validates if contract outpoint is correct
@@ -795,19 +785,22 @@ mod test {
 
         // Error Cases---------------------------------------------
         // Check validation against wrong spending outpoint
-        assert_eq!(
-            validate_contract_tx(
-                &contract_tx,
-                Some(
-                    &OutPoint::from_str(
-                        "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:40",
-                    )
-                    .unwrap()
-                ),
-                &contract_script
+        if let Error::Protocol(message) = validate_contract_tx(
+            &contract_tx,
+            Some(
+                &OutPoint::from_str(
+                    "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:40",
+                )
+                .unwrap(),
             ),
-            Err("not spending the funding outpoint")
-        );
+            &contract_script,
+        )
+        .unwrap_err()
+        {
+            assert_eq!(message, "not spending the funding outpoint")
+        } else {
+            panic!();
+        }
 
         // Push one more input in contract transaction
         let mut contract_tx_err1 = contract_tx.clone();
@@ -820,29 +813,33 @@ mod test {
             witness: Vec::new(),
             script_sig: Script::new(),
         });
-
         // Verify validation fails
-        assert_eq!(
-            validate_contract_tx(&contract_tx_err1, Some(&spending_utxo), &contract_script),
-            Err("invalid number of inputs or outputs")
-        );
+        if let Error::Protocol(message) =
+            validate_contract_tx(&contract_tx_err1, Some(&spending_utxo), &contract_script)
+                .unwrap_err()
+        {
+            assert_eq!(message, "invalid number of inputs or outputs");
+        } else {
+            panic!();
+        }
 
         // Change contract transaction to pay into wrong output
         let mut contract_tx_err2 = contract_tx.clone();
-
         let multisig_redeemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
         let multi_script_pubkey = Address::p2wsh(&multisig_redeemscript, NETWORK).script_pubkey();
-
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
             value: 3000,
         };
-
         // Verify validation fails
-        assert_eq!(
-            validate_contract_tx(&contract_tx_err2, Some(&spending_utxo), &contract_script),
-            Err("doesnt pay to requested contract")
-        );
+        if let Error::Protocol(message) =
+            validate_contract_tx(&contract_tx_err2, Some(&spending_utxo), &contract_script)
+                .unwrap_err()
+        {
+            assert_eq!(message, "doesnt pay to requested contract");
+        } else {
+            panic!();
+        }
     }
 
     #[test]
@@ -898,7 +895,8 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &priv_1.key,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             verify_contract_tx_sig(
@@ -917,7 +915,8 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &priv_2.key,
-        );
+        )
+        .unwrap();
 
         assert!(verify_contract_tx_sig(
             &contract_tx,

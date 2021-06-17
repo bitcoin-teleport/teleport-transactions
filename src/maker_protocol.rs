@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
@@ -15,6 +14,7 @@ use bitcoincore_rpc::{Client, RpcApi};
 
 use itertools::izip;
 
+use crate::error::Error;
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
     ReceiversContractSig, SenderContractTxInfo, SendersAndReceiversContractSigs,
@@ -44,8 +44,8 @@ pub const NEWLY_CONNECTED_TAKER_ALLOWED_METHODS: [&str; 5] = [
 #[tokio::main]
 pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) {
     match run(rpc, wallet, port).await {
-        Ok(_o) => println!("ok"),
-        Err(e) => println!("err {:?}", e),
+        Ok(_o) => println!("maker ended without error"),
+        Err(e) => println!("maker ended with err {:?}", e),
     };
 }
 
@@ -63,7 +63,7 @@ async fn run(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     port: u16,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Error> {
     //TODO port number in config file
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     println!("listening on port {}", port);
@@ -243,7 +243,7 @@ fn handle_sign_senders_contract_tx(
     //see that other example where Result<> inside an iterator is used
     let mut sigs = Vec::<Signature>::new();
     for txinfo in message.txes_info {
-        let sig = match contracts::validate_and_sign_senders_contract_tx(
+        let sig = contracts::validate_and_sign_senders_contract_tx(
             &txinfo.multisig_key_nonce,
             &txinfo.hashlock_key_nonce,
             &txinfo.timelock_pubkey,
@@ -254,10 +254,8 @@ fn handle_sign_senders_contract_tx(
             message.locktime,
             &tweakable_privkey,
             &mut wallet.write().unwrap(),
-        ) {
-            Ok(s) => s,
-            Err(e) => return Err(e),
-        };
+        )
+        .unwrap();
         sigs.push(sig);
     }
     Ok(Some(MakerToTakerMessage::SendersContractSig(
@@ -297,9 +295,8 @@ fn handle_proof_of_funding(
             &funding_info,
             funding_output_index,
             proof.next_locktime,
-        )
-        .unwrap(); //TODO error handle
-        if verify_result.is_none() {
+        );
+        if verify_result.is_err() {
             return Err("invalid proof of funding");
         }
         incoming_swapcoin_keys.push(verify_result.unwrap());
@@ -311,9 +308,10 @@ fn handle_proof_of_funding(
             .next()
             .unwrap()
             .contract_redeemscript,
-    );
+    )
+    .unwrap();
     if confirmed_funding_txes_hashvalue_check_iter
-        .any(|info| read_hashvalue_from_contract(&info.contract_redeemscript) != hashvalue)
+        .any(|info| read_hashvalue_from_contract(&info.contract_redeemscript).unwrap() != hashvalue)
     {
         return Err("contract redeemscripts dont all use the same hashvalue");
     }
@@ -331,12 +329,12 @@ fn handle_proof_of_funding(
             &rpc,
             &funding_info.multisig_redeemscript,
             CoreAddressLabelType::Wallet,
-        );
+        ).unwrap();
         wallet.read().unwrap().import_tx_with_merkleproof(
             &rpc,
             &funding_info.funding_tx,
             funding_info.funding_tx_merkleproof.clone(),
-        );
+        ).unwrap();
         let my_receivers_contract_tx = contracts::create_receivers_contract_tx(
             OutPoint {
                 txid: funding_info.funding_tx.txid(),
@@ -370,8 +368,10 @@ fn handle_proof_of_funding(
     println!("incoming amount = {}", incoming_amount);
     let amount = incoming_amount - coinswap_fees;
 
-    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys, _timelock_privkeys) =
-        wallet.write().unwrap().initalize_coinswap(
+    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys, _timelock_privkeys) = wallet
+        .write()
+        .unwrap()
+        .initalize_coinswap(
             &rpc,
             amount,
             &proof
@@ -386,7 +386,8 @@ fn handle_proof_of_funding(
                 .collect::<Vec<PublicKey>>(),
             hashvalue,
             proof.next_locktime,
-        );
+        )
+        .unwrap();
 
     println!("my_funding_txes = {:?}", my_funding_txes);
 
@@ -511,7 +512,8 @@ fn handle_sign_receivers_contract_tx(
                 .unwrap()
                 .find_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
                 .ok_or("multisig_redeemscript not found")?
-                .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx))
+                .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)
+                .map_err(|_| "unable to sign contract tx with privkey")?)
         })
         .collect::<Vec<Result<Signature, &'static str>>>();
     if let Some(re) = result_sigs.iter().find(|r| r.is_err()) {
@@ -538,7 +540,9 @@ fn handle_hash_preimage(
             let mut incoming_swapcoin = wallet_mref
                 .find_swapcoin_mut(&multisig_redeemscript)
                 .ok_or("senders multisig_redeemscript not found")?;
-            if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript) != hashvalue {
+            if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript).unwrap()
+                != hashvalue
+            {
                 return Err("not correct hash preimage");
             }
             incoming_swapcoin.hash_preimage = Some(message.preimage);
@@ -551,7 +555,9 @@ fn handle_hash_preimage(
         let outgoing_swapcoin = wallet_ref
             .find_swapcoin(&multisig_redeemscript)
             .ok_or("receivers multisig_redeemscript not found")?;
-        if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript) != hashvalue {
+        if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript).unwrap()
+            != hashvalue
+        {
             return Err("not correct hash preimage");
         }
         swapcoin_private_keys.push(SwapCoinPrivateKey {
@@ -581,7 +587,8 @@ fn handle_private_key_handover(
             Ok(wallet_ref
                 .find_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
                 .ok_or("multisig_redeemscript not found")?
-                .apply_privkey(swapcoin_private_key.key)?)
+                .apply_privkey(swapcoin_private_key.key)
+                .map_err(|_| "wrong privkey")?)
         })
         .collect::<Vec<Result<(), &'static str>>>();
 

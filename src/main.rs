@@ -18,6 +18,7 @@ mod wallet_sync;
 use wallet_sync::Wallet;
 
 mod contracts;
+mod error;
 mod maker_protocol;
 mod messages;
 mod offerbook_sync;
@@ -52,7 +53,7 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
         The teleport wallet file is needed to backup swapcoins"
     );
 
-    Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension)?;
+    Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension).unwrap();
 
     let w = match Wallet::load_wallet_from_file(&wallet_file_name) {
         Ok(w) => w,
@@ -62,10 +63,11 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     w.import_initial_addresses(
         &rpc,
         &w.get_hd_wallet_descriptors(&rpc)
+            .unwrap()
             .iter()
             .collect::<Vec<&String>>(),
         &Vec::<_>::new(),
-    );
+    ).unwrap();
     Ok(())
 }
 
@@ -85,7 +87,7 @@ fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     io::stdin().read_line(&mut extension)?;
     extension = extension.trim().to_string();
 
-    Wallet::save_new_wallet_file(&wallet_file_name, seed_phrase, extension)?;
+    Wallet::save_new_wallet_file(&wallet_file_name, seed_phrase, extension).unwrap();
     Ok(())
 }
 
@@ -129,7 +131,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
             return;
         }
     };
-    wallet.startup_sync(&rpc);
+    wallet.startup_sync(&rpc).unwrap();
 
     let long_form = long_form.unwrap_or(false);
 
@@ -189,9 +191,15 @@ fn print_receive_invoice(wallet_file_name: &PathBuf) {
             return;
         }
     };
-    wallet.startup_sync(&rpc);
+    wallet.startup_sync(&rpc).unwrap();
 
-    let addr = wallet.get_next_external_address(&rpc);
+    let addr = match wallet.get_next_external_address(&rpc) {
+        Ok(a) => a,
+        Err(error) => {
+            println!("error: {:?}", error);
+            return;
+        }
+    };
     println!("receive invoice:\n\nbitcoin:{}\n", addr);
 }
 
@@ -210,7 +218,7 @@ fn run_maker(wallet_file_name: &PathBuf, port: u16) {
             return;
         }
     };
-    wallet.startup_sync(&rpc);
+    wallet.startup_sync(&rpc).unwrap();
 
     let rpc_ptr = Arc::new(rpc);
     let wallet_ptr = Arc::new(RwLock::new(wallet));
@@ -232,7 +240,7 @@ fn run_taker(wallet_file_name: &PathBuf) {
             return;
         }
     };
-    wallet.startup_sync(&rpc);
+    wallet.startup_sync(&rpc).unwrap();
     taker_protocol::start_taker(&rpc, &mut wallet);
 }
 
@@ -332,10 +340,11 @@ mod test {
             &rpc,
             &wallet
                 .get_hd_wallet_descriptors(&rpc)
+                .unwrap()
                 .iter()
                 .collect::<Vec<&String>>(),
             &Vec::<_>::new(),
-        );
+        ).unwrap();
 
         wallet
     }
@@ -389,9 +398,9 @@ mod test {
 
         // Create 3 taker and maker address and send 0.05 btc to each
         for _ in 0..3 {
-            let taker_address = taker.get_next_external_address(&rpc);
-            let maker1_address = maker1.get_next_external_address(&rpc);
-            let maker2_address = maker2.get_next_external_address(&rpc);
+            let taker_address = taker.get_next_external_address(&rpc).unwrap();
+            let maker1_address = maker1.get_next_external_address(&rpc).unwrap();
+            let maker2_address = maker2.get_next_external_address(&rpc).unwrap();
 
             rpc.send_to_address(
                 &taker_address,

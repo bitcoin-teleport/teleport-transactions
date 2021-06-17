@@ -86,14 +86,16 @@ async fn send_coinswap(
     ) = generate_maker_multisig_and_hashlock_keys(&first_maker.offer.tweakable_point, my_tx_count);
 
     let (my_funding_txes, mut outgoing_swapcoins, my_timelock_pubkeys, _my_timelock_privkeys) =
-        wallet.initalize_coinswap(
-            rpc,
-            amount,
-            &first_maker_multisig_pubkeys,
-            &first_maker_hashlock_pubkeys,
-            hashvalue,
-            first_swap_locktime,
-        );
+        wallet
+            .initalize_coinswap(
+                rpc,
+                amount,
+                &first_maker_multisig_pubkeys,
+                &first_maker_hashlock_pubkeys,
+                hashvalue,
+                first_swap_locktime,
+            )
+            .unwrap();
 
     let first_maker_senders_contract_sigs = request_senders_contract_tx_signatures(
         &first_maker.address,
@@ -457,10 +459,10 @@ fn generate_maker_multisig_and_hashlock_keys(
     Vec<SecretKey>,
 ) {
     let (multisig_pubkeys, multisig_keys_or_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| contracts::derive_maker_pubkey_and_nonce(*tweakable_point))
+        .map(|_| contracts::derive_maker_pubkey_and_nonce(*tweakable_point).unwrap())
         .unzip();
     let (hashlock_pubkeys, hashlock_keys_or_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| contracts::derive_maker_pubkey_and_nonce(*tweakable_point))
+        .map(|_| contracts::derive_maker_pubkey_and_nonce(*tweakable_point).unwrap())
         .unzip();
 
     (
@@ -666,7 +668,9 @@ fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoin_private_keys: &[SwapCoinPrivateKey],
 ) -> Result<(), &'static str> {
     for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
-        swapcoin.apply_privkey(swapcoin_private_key.key)?;
+        swapcoin
+            .apply_privkey(swapcoin_private_key.key)
+            .map_err(|_| "wrong privkey")?;
     }
     Ok(())
 }
@@ -817,7 +821,9 @@ fn sign_receivers_contract_txes(
         .iter()
         .zip(outgoing_swapcoins.iter())
         .map(|(receivers_contract_tx, outgoing_swapcoin)| {
-            outgoing_swapcoin.sign_contract_tx_with_my_privkey(receivers_contract_tx)
+            outgoing_swapcoin
+                .sign_contract_tx_with_my_privkey(receivers_contract_tx)
+                .unwrap()
         })
         .collect::<Vec<Signature>>()
 }
@@ -841,6 +847,7 @@ fn sign_senders_contract_txes(
                     senders_contract_tx_info.funding_amount,
                     my_receiving_multisig_privkey,
                 )
+                .unwrap()
             },
         )
         .collect::<Vec<Signature>>()
@@ -876,11 +883,13 @@ fn create_watch_only_swap_coins(
     //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
     // is not equal to p2wsh(next_swap_contract_redeemscripts)
     next_swapcoins.iter().for_each(|swapcoin| {
-        wallet.import_redeemscript(
-            rpc,
-            &swapcoin.get_multisig_redeemscript(),
-            CoreAddressLabelType::WatchOnlySwapCoin,
-        )
+        wallet
+            .import_redeemscript(
+                rpc,
+                &swapcoin.get_multisig_redeemscript(),
+                CoreAddressLabelType::WatchOnlySwapCoin,
+            )
+            .unwrap()
     });
     next_swapcoins
 }
