@@ -67,7 +67,8 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
             .iter()
             .collect::<Vec<&String>>(),
         &Vec::<_>::new(),
-    ).unwrap();
+    )
+    .unwrap();
     Ok(())
 }
 
@@ -336,15 +337,17 @@ mod test {
 
         let wallet = Wallet::load_wallet_from_file(filename).unwrap();
         // import intital addresses to core
-        wallet.import_initial_addresses(
-            &rpc,
-            &wallet
-                .get_hd_wallet_descriptors(&rpc)
-                .unwrap()
-                .iter()
-                .collect::<Vec<&String>>(),
-            &Vec::<_>::new(),
-        ).unwrap();
+        wallet
+            .import_initial_addresses(
+                &rpc,
+                &wallet
+                    .get_hd_wallet_descriptors(&rpc)
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<&String>>(),
+                &Vec::<_>::new(),
+            )
+            .unwrap();
 
         wallet
     }

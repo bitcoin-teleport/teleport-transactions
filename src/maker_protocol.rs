@@ -59,11 +59,7 @@ struct ConnectionState {
     pending_funding_txes: Option<Vec<Transaction>>,
 }
 
-async fn run(
-    rpc: Arc<Client>,
-    wallet: Arc<RwLock<Wallet>>,
-    port: u16,
-) -> Result<(), Error> {
+async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result<(), Error> {
     //TODO port number in config file
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     println!("listening on port {}", port);
@@ -325,16 +321,24 @@ fn handle_proof_of_funding(
         funding_outputs.iter(),
         incoming_swapcoin_keys.iter()
     ) {
-        wallet.read().unwrap().import_redeemscript(
-            &rpc,
-            &funding_info.multisig_redeemscript,
-            CoreAddressLabelType::Wallet,
-        ).unwrap();
-        wallet.read().unwrap().import_tx_with_merkleproof(
-            &rpc,
-            &funding_info.funding_tx,
-            funding_info.funding_tx_merkleproof.clone(),
-        ).unwrap();
+        wallet
+            .read()
+            .unwrap()
+            .import_redeemscript(
+                &rpc,
+                &funding_info.multisig_redeemscript,
+                CoreAddressLabelType::Wallet,
+            )
+            .unwrap();
+        wallet
+            .read()
+            .unwrap()
+            .import_tx_with_merkleproof(
+                &rpc,
+                &funding_info.funding_tx,
+                funding_info.funding_tx_merkleproof.clone(),
+            )
+            .unwrap();
         let my_receivers_contract_tx = contracts::create_receivers_contract_tx(
             OutPoint {
                 txid: funding_info.funding_tx.txid(),
