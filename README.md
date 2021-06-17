@@ -306,7 +306,7 @@ Y.    privC(C+D) ---------------------------------------->               | (R)
 
 ## Community
 
-* IRC channel: `##coinswap`. Logs available [here](http://gnusha.org/coinswap/). Accessible on the [freenode network](https://freenode.net/) at `irc.freenode.net:6697` and on the [webchat client](https://webchat.freenode.net/##coinswap). Accessible anonymously to Tor users on the [Hackint network](https://www.hackint.org/transport/tor) at `ncwkrwxpq2ikcngxq3dy2xctuheniggtqeibvgofixpzvrwpa77tozqd.onion:6667`.
+* IRC channel: `#coinswap`. Logs available [here](http://gnusha.org/coinswap/). Accessible on the [libera IRC network](https://libera.chat/) at `irc.libera.chat:6697 (TLS)` and on the [webchat client](https://web.libera.chat/#coinswap). Accessible anonymously to Tor users on the [Hackint network](https://www.hackint.org/transport/tor) at `ncwkrwxpq2ikcngxq3dy2xctuheniggtqeibvgofixpzvrwpa77tozqd.onion:6667`.
 
 * Chris Belcher's work diary: https://gist.github.com/chris-belcher/ca5051285c6f8d38693fd127575be44d
 
