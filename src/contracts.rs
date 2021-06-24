@@ -285,7 +285,7 @@ pub fn verify_proof_of_funding(
             return Err(Error::Protocol("funding tx not confirmed"));
         }
     } else {
-        return Err(Error::Protocol("output doesnt exist"));
+        return Err(Error::Protocol("funding tx output doesnt exist"));
     }
 
     //pattern match to check redeemscript is really a 2of2 multisig

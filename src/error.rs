@@ -7,14 +7,14 @@ use bitcoincore_rpc;
 // try to make functions return this
 #[derive(Debug)]
 pub enum Error {
-    Network(Box<dyn error::Error>),
+    Network(Box<dyn error::Error + Send>),
     Disk(io::Error),
     Protocol(&'static str),
     Rpc(bitcoincore_rpc::Error),
 }
 
-impl From<Box<dyn error::Error>> for Error {
-    fn from(e: Box<dyn error::Error>) -> Error {
+impl From<Box<dyn error::Error + Send>> for Error {
+    fn from(e: Box<dyn error::Error + Send>) -> Error {
         Error::Network(e)
     }
 }

@@ -1,10 +1,12 @@
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use tokio::io::BufReader;
+use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
-
+use tokio::time::sleep;
 use tokio::select;
 use tokio::sync::mpsc;
 
@@ -25,7 +27,6 @@ use crate::messages::{
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
 use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
-
 use crate::contracts;
 use crate::contracts::SwapCoin;
 use crate::contracts::{find_funding_output, read_hashvalue_from_contract};
@@ -67,22 +68,42 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     println!("listening on port {}", port);
 
-    let (server_end_tx, mut server_end_rx) = mpsc::channel::<()>(100);
+    let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
+    let mut accepting_clients = true;
     loop {
-        let server_end_tx = server_end_tx.clone();
-        let new_client = select! {
-            _ = server_end_rx.recv() => None,
-            a = listener.accept() => Some(a?)
+        let (mut socket, addr) = select! {
+            new_client = listener.accept() => new_client?,
+            client_err = server_loop_comms_rx.recv() => {
+                //unwrap the option here because we'll never close the mscp so it will always work
+                match client_err.as_ref().unwrap() {
+                    Error::Rpc(_e) => {
+                        println!("lost connection with bitcoin node, temporarily shutting \
+                                  down server until connection reestablished");
+                        accepting_clients = false;
+                        continue;
+                    },
+                    _ => println!("ending server"),
+                }
+                break Err(client_err.unwrap());
+            },
+            //TODO make a const for this magic number of how often to poll the rpc
+            _ = sleep(Duration::from_secs(60)) => {
+                let r = rpc.get_best_block_hash();
+                accepting_clients = r.is_ok();
+                println!("timeout branch, accepting clients={}", accepting_clients);
+                continue;
+            },
         };
-        if new_client.is_none() {
-            println!("got signal to end server");
-            break;
+
+        if !accepting_clients {
+            println!("rejecting connection from {:?}", addr);
+            continue;
         }
 
-        let (mut socket, addr) = new_client.unwrap();
         println!("accepted connection from {:?}", addr);
         let client_rpc = Arc::clone(&rpc);
         let client_wallet = Arc::clone(&wallet);
+        let server_loop_comms_tx = server_loop_comms_tx.clone();
 
         tokio::spawn(async move {
             let (socket_reader, mut socket_writer) = socket.split();
@@ -95,14 +116,18 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 pending_funding_txes: None,
             };
 
-            let first_message = MakerToTakerMessage::MakerHello(MakerHello {
-                protocol_version_min: 0,
-                protocol_version_max: 0,
-            });
-            let mut result_bytes = serde_json::to_vec(&first_message).unwrap();
-            result_bytes.push(b'\n');
-            //TODO error handling here
-            socket_writer.write_all(&result_bytes).await.unwrap();
+            if let Err(e) = send_message(
+                &mut socket_writer,
+                &MakerToTakerMessage::MakerHello(MakerHello {
+                    protocol_version_min: 0,
+                    protocol_version_max: 0,
+                }),
+            )
+            .await
+            {
+                println!("io error sending first message: {:?}", e);
+                return;
+            }
 
             loop {
                 let mut line = String::new();
@@ -113,13 +138,13 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                     }
                     Ok(_n) => (),
                     Err(e) => {
-                        println!("error reading from socket {:?}", e);
+                        println!("error reading from socket: {:?}", e);
                         break;
                     }
                 };
                 #[cfg(test)]
                 if line == "kill".to_string() {
-                    server_end_tx.send(()).await.unwrap();
+                    server_loop_comms_tx.send(Error::Protocol("kill signal")).await.unwrap();
                     println!("Kill signal received, stopping maker....");
                     break;
                 }
@@ -133,20 +158,37 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 );
                 match message_result {
                     Ok(reply) => {
-                        if let Some(reply_data) = reply {
-                            //TODO error handling here
-                            socket_writer.write_all(&reply_data).await.unwrap();
+                        if let Some(message) = reply {
+                            if let Err(e) = send_message(&mut socket_writer, &message).await {
+                                println!("closing due to io error sending message: {:?}", e);
+                                break;
+                            }
                         }
                         //if reply is None then dont send anything to client
                     }
-                    Err(e) => {
-                        println!("dropping client, error with request: {}", e);
+                    Err(err) => {
+                        println!("error handling client request: {:?}", err);
+                        match err {
+                            Error::Network(_e) => (),
+                            Error::Protocol(_e) => (),
+                            Error::Disk(e) => server_loop_comms_tx.send(Error::Disk(e)).await.unwrap(),
+                            Error::Rpc(e) => server_loop_comms_tx.send(Error::Rpc(e)).await.unwrap(),
+                        };
                         break;
                     }
                 };
             }
         });
     }
+}
+
+async fn send_message(
+    socket_writer: &mut WriteHalf<'_>,
+    first_message: &MakerToTakerMessage,
+) -> Result<(), Error> {
+    let mut message_bytes = serde_json::to_vec(first_message).map_err(|e| io::Error::from(e))?;
+    message_bytes.push(b'\n');
+    socket_writer.write_all(&message_bytes).await?;
     Ok(())
 }
 
@@ -155,16 +197,16 @@ fn handle_message(
     connection_state: &mut ConnectionState,
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
-) -> Result<Option<Vec<u8>>, &'static str> {
+) -> Result<Option<MakerToTakerMessage>, Error> {
     //println!("<== {}", line);
 
     let request_json: Value = match serde_json::from_str(&line) {
         Ok(r) => r,
-        Err(_e) => return Err("json parsing error"),
+        Err(_e) => return Err(Error::Protocol("json parsing error")),
     };
     let method = match request_json["method"].as_str() {
         Some(m) => m,
-        None => return Err("missing method"),
+        None => return Err(Error::Protocol("missing method")),
     };
     let is_method_allowed = match connection_state.allowed_method {
         Some(allowed_method) => method == allowed_method,
@@ -173,12 +215,12 @@ fn handle_message(
             .any(|&r| r == method),
     };
     if !is_method_allowed {
-        return Err("unexpected method");
+        return Err(Error::Protocol("unexpected method"));
     }
 
     let request: TakerToMakerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
-        Err(_e) => return Err("message parsing error"),
+        Err(_e) => return Err(Error::Protocol("message parsing error")),
     };
     println!("<== {:?}", request);
     let outgoing_message = match request {
@@ -187,7 +229,7 @@ fn handle_message(
             None
         }
         TakerToMakerMessage::GiveOffer(_message) => {
-            let max_size = wallet.read().unwrap().get_offer_maxsize(rpc).unwrap();
+            let max_size = wallet.read().unwrap().get_offer_maxsize(rpc)?;
             let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
             connection_state.allowed_method = Some("signsenderscontracttx");
             Some(MakerToTakerMessage::Offer(Offer {
@@ -224,11 +266,7 @@ fn handle_message(
     };
     println!("==> {:?}", outgoing_message);
     match outgoing_message {
-        Some(result) => {
-            let mut result_bytes = serde_json::to_vec(&result).unwrap();
-            result_bytes.push(b'\n');
-            Ok(Some(result_bytes))
-        }
+        Some(result) => Ok(Some(result)),
         None => Ok(None),
     }
 }
@@ -236,7 +274,7 @@ fn handle_message(
 fn handle_sign_senders_contract_tx(
     wallet: Arc<RwLock<Wallet>>,
     message: SignSendersContractTx,
-) -> Result<Option<MakerToTakerMessage>, &'static str> {
+) -> Result<Option<MakerToTakerMessage>, Error> {
     let tweakable_privkey = wallet.read().unwrap().get_tweakable_keypair().0;
     //TODO this for loop could be replaced with an iterator and map
     //see that other example where Result<> inside an iterator is used
@@ -253,8 +291,7 @@ fn handle_sign_senders_contract_tx(
             message.locktime,
             &tweakable_privkey,
             &mut wallet.write().unwrap(),
-        )
-        .unwrap();
+        )?;
         sigs.push(sig);
     }
     Ok(Some(MakerToTakerMessage::SendersContractSig(
@@ -267,10 +304,13 @@ fn handle_proof_of_funding(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     proof: &ProofOfFunding,
-) -> Result<Option<MakerToTakerMessage>, &'static str> {
+) -> Result<Option<MakerToTakerMessage>, Error> {
     let mut funding_output_indexes = Vec::<u32>::new();
     let mut funding_outputs = Vec::<&TxOut>::new();
     let mut incoming_swapcoin_keys = Vec::<(SecretKey, PublicKey)>::new();
+    if proof.confirmed_funding_txes.len() == 0 {
+        return Err(Error::Protocol("zero funding txes provided"));
+    }
     for funding_info in &proof.confirmed_funding_txes {
         //check that the claimed multisig redeemscript is in the transaction
 
@@ -283,7 +323,7 @@ fn handle_proof_of_funding(
             &funding_info.multisig_redeemscript,
         ) {
             Some(fo) => fo,
-            None => return Err("funding tx doesnt pay to multisig"),
+            None => return Err(Error::Protocol("funding tx doesnt pay to multisig")),
         };
         funding_output_indexes.push(funding_output_index);
         funding_outputs.push(funding_output);
@@ -294,13 +334,11 @@ fn handle_proof_of_funding(
             &funding_info,
             funding_output_index,
             proof.next_locktime,
-        );
-        if verify_result.is_err() {
-            return Err("invalid proof of funding");
-        }
-        incoming_swapcoin_keys.push(verify_result.unwrap());
+        )?;
+        incoming_swapcoin_keys.push(verify_result);
     }
 
+    //check that all the contract redeemscripts involve the same hashvalue
     let mut confirmed_funding_txes_hashvalue_check_iter = proof.confirmed_funding_txes.iter();
     let hashvalue = read_hashvalue_from_contract(
         &confirmed_funding_txes_hashvalue_check_iter
@@ -308,11 +346,15 @@ fn handle_proof_of_funding(
             .unwrap()
             .contract_redeemscript,
     )
-    .unwrap();
-    if confirmed_funding_txes_hashvalue_check_iter
-        .any(|info| read_hashvalue_from_contract(&info.contract_redeemscript).unwrap() != hashvalue)
+    .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?;
+    for hv in confirmed_funding_txes_hashvalue_check_iter
+        .map(|info| read_hashvalue_from_contract(&info.contract_redeemscript))
     {
-        return Err("contract redeemscripts dont all use the same hashvalue");
+        if hv.map_err(|_| Error::Protocol("unable to read hashvalue from contract"))? != hashvalue {
+            return Err(Error::Protocol(
+                "contract redeemscripts dont all use the same hashvalue",
+            ));
+        }
     }
 
     println!("proof of funding valid, creating own funding txes");
@@ -324,24 +366,16 @@ fn handle_proof_of_funding(
         funding_outputs.iter(),
         incoming_swapcoin_keys.iter()
     ) {
-        wallet
-            .read()
-            .unwrap()
-            .import_redeemscript(
-                &rpc,
-                &funding_info.multisig_redeemscript,
-                CoreAddressLabelType::Wallet,
-            )
-            .unwrap();
-        wallet
-            .read()
-            .unwrap()
-            .import_tx_with_merkleproof(
-                &rpc,
-                &funding_info.funding_tx,
-                funding_info.funding_tx_merkleproof.clone(),
-            )
-            .unwrap();
+        wallet.read().unwrap().import_redeemscript(
+            &rpc,
+            &funding_info.multisig_redeemscript,
+            CoreAddressLabelType::Wallet,
+        )?;
+        wallet.read().unwrap().import_tx_with_merkleproof(
+            &rpc,
+            &funding_info.funding_tx,
+            funding_info.funding_tx_merkleproof.clone(),
+        )?;
         let my_receivers_contract_tx = contracts::create_receivers_contract_tx(
             OutPoint {
                 txid: funding_info.funding_tx.txid(),
@@ -375,10 +409,8 @@ fn handle_proof_of_funding(
     println!("incoming amount = {}", incoming_amount);
     let amount = incoming_amount - coinswap_fees;
 
-    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys, _timelock_privkeys) = wallet
-        .write()
-        .unwrap()
-        .initalize_coinswap(
+    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys, _timelock_privkeys) =
+        wallet.write().unwrap().initalize_coinswap(
             &rpc,
             amount,
             &proof
@@ -393,8 +425,7 @@ fn handle_proof_of_funding(
                 .collect::<Vec<PublicKey>>(),
             hashvalue,
             proof.next_locktime,
-        )
-        .unwrap();
+        )?;
 
     println!("my_funding_txes = {:?}", my_funding_txes);
 
@@ -439,19 +470,19 @@ fn handle_senders_and_receivers_contract_sigs(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     sigs: SendersAndReceiversContractSigs,
-) -> Result<Option<MakerToTakerMessage>, &'static str> {
+) -> Result<Option<MakerToTakerMessage>, Error> {
     //if incoming/outgoing_swapcoin are None then the app should crash because
-    //its a logic error, so no error handling with unwrap() here
+    //its a logic error, so no error handling, just use unwrap()
 
     let incoming_swapcoins = connection_state.incoming_swapcoins.as_mut().unwrap();
     if sigs.receivers_sigs.len() != incoming_swapcoins.len() {
-        return Err("invalid number of recv signatures");
+        return Err(Error::Protocol("invalid number of recv signatures"));
     }
     for (receivers_sig, incoming_swapcoin) in
         sigs.receivers_sigs.iter().zip(incoming_swapcoins.iter())
     {
         if !incoming_swapcoin.verify_contract_tx_sig(receivers_sig) {
-            return Err("invalid recv signature");
+            return Err(Error::Protocol("invalid recv signature"));
         }
     }
     sigs.receivers_sigs
@@ -463,12 +494,12 @@ fn handle_senders_and_receivers_contract_sigs(
 
     let outgoing_swapcoins = connection_state.outgoing_swapcoins.as_mut().unwrap();
     if sigs.senders_sigs.len() != outgoing_swapcoins.len() {
-        return Err("invalid number of send signatures");
+        return Err(Error::Protocol("invalid number of send signatures"));
     }
     for (senders_sig, outgoing_swapcoin) in sigs.senders_sigs.iter().zip(outgoing_swapcoins.iter())
     {
         if !outgoing_swapcoin.verify_contract_tx_sig(senders_sig) {
-            return Err("invalid send signature");
+            return Err(Error::Protocol("invalid send signature"));
         }
     }
     sigs.senders_sigs
@@ -481,10 +512,11 @@ fn handle_senders_and_receivers_contract_sigs(
     let mut w = wallet.write().unwrap();
     incoming_swapcoins
         .iter()
-        .for_each(|incoming_swapcoin| w.add_swapcoin(incoming_swapcoin.clone()).unwrap());
+        .for_each(|incoming_swapcoin| w.add_swapcoin(incoming_swapcoin.clone()));
     outgoing_swapcoins
         .iter()
-        .for_each(|outgoing_swapcoin| w.add_swapcoin(outgoing_swapcoin.clone()).unwrap());
+        .for_each(|outgoing_swapcoin| w.add_swapcoin(outgoing_swapcoin.clone()));
+    w.update_swap_coins_list()?;
 
     //TODO add coin to watchtowers
 
@@ -493,7 +525,7 @@ fn handle_senders_and_receivers_contract_sigs(
             "broadcasting tx = {}",
             bitcoin::consensus::encode::serialize_hex(my_funding_tx)
         );
-        let txid = rpc.send_raw_transaction(my_funding_tx).unwrap();
+        let txid = rpc.send_raw_transaction(my_funding_tx)?;
         assert_eq!(txid, my_funding_tx.txid());
         println!("broadcasted my funding tx, txid={}", txid);
     }
@@ -509,48 +541,39 @@ fn handle_senders_and_receivers_contract_sigs(
 fn handle_sign_receivers_contract_tx(
     wallet: Arc<RwLock<Wallet>>,
     message: SignReceiversContractTx,
-) -> Result<Option<MakerToTakerMessage>, &'static str> {
-    let result_sigs = message
-        .txes
-        .iter()
-        .map(|receivers_contract_tx_info| {
-            Ok(wallet
+) -> Result<Option<MakerToTakerMessage>, Error> {
+    let mut sigs = Vec::<Signature>::new();
+    for receivers_contract_tx_info in message.txes {
+        sigs.push(
+            wallet
                 .read()
                 .unwrap()
                 .find_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
-                .ok_or("multisig_redeemscript not found")?
-                .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)
-                .map_err(|_| "unable to sign contract tx with privkey")?)
-        })
-        .collect::<Vec<Result<Signature, &'static str>>>();
-    if let Some(re) = result_sigs.iter().find(|r| r.is_err()) {
-        return Err(re.unwrap_err());
+                .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+                .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?,
+        );
     }
     Ok(Some(MakerToTakerMessage::ReceiversContractSig(
-        ReceiversContractSig {
-            sigs: result_sigs
-                .iter()
-                .map(|result_sig| result_sig.unwrap())
-                .collect::<Vec<Signature>>(),
-        },
+        ReceiversContractSig { sigs },
     )))
 }
 
 fn handle_hash_preimage(
     wallet: Arc<RwLock<Wallet>>,
     message: HashPreimage,
-) -> Result<Option<MakerToTakerMessage>, &'static str> {
+) -> Result<Option<MakerToTakerMessage>, Error> {
     let hashvalue = Hash160::hash(&message.preimage).into_inner();
     {
         let mut wallet_mref = wallet.write().unwrap();
         for multisig_redeemscript in message.senders_multisig_redeemscripts {
             let mut incoming_swapcoin = wallet_mref
                 .find_swapcoin_mut(&multisig_redeemscript)
-                .ok_or("senders multisig_redeemscript not found")?;
-            if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript).unwrap()
+                .ok_or(Error::Protocol("senders multisig_redeemscript not found"))?;
+            if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)
+                .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?
                 != hashvalue
             {
-                return Err("not correct hash preimage");
+                return Err(Error::Protocol("not correct hash preimage"));
             }
             incoming_swapcoin.hash_preimage = Some(message.preimage);
         }
@@ -561,11 +584,12 @@ fn handle_hash_preimage(
     for multisig_redeemscript in message.receivers_multisig_redeemscripts {
         let outgoing_swapcoin = wallet_ref
             .find_swapcoin(&multisig_redeemscript)
-            .ok_or("receivers multisig_redeemscript not found")?;
-        if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript).unwrap()
+            .ok_or(Error::Protocol("receivers multisig_redeemscript not found"))?;
+        if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)
+            .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?
             != hashvalue
         {
-            return Err("not correct hash preimage");
+            return Err(Error::Protocol("not correct hash preimage"));
         }
         swapcoin_private_keys.push(SwapCoinPrivateKey {
             multisig_redeemscript,
@@ -573,7 +597,7 @@ fn handle_hash_preimage(
         });
     }
 
-    wallet_ref.update_swap_coins_list().unwrap();
+    wallet_ref.update_swap_coins_list()?;
     Ok(Some(MakerToTakerMessage::PrivateKeyHandover(
         PrivateKeyHandover {
             swapcoin_private_keys,
@@ -584,25 +608,15 @@ fn handle_hash_preimage(
 fn handle_private_key_handover(
     wallet: Arc<RwLock<Wallet>>,
     message: PrivateKeyHandover,
-) -> Result<Option<MakerToTakerMessage>, &'static str> {
+) -> Result<Option<MakerToTakerMessage>, Error> {
     let mut wallet_ref = wallet.write().unwrap();
-
-    let apply_privkey_result = message
-        .swapcoin_private_keys
-        .iter()
-        .map(|swapcoin_private_key| {
-            Ok(wallet_ref
-                .find_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
-                .ok_or("multisig_redeemscript not found")?
-                .apply_privkey(swapcoin_private_key.key)
-                .map_err(|_| "wrong privkey")?)
-        })
-        .collect::<Vec<Result<(), &'static str>>>();
-
-    wallet_ref.update_swap_coins_list().unwrap();
-    if let Some(re) = apply_privkey_result.iter().find(|r| r.is_err()) {
-        return Err(re.unwrap_err());
+    for swapcoin_private_key in message.swapcoin_private_keys {
+        wallet_ref
+            .find_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
+            .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+            .apply_privkey(swapcoin_private_key.key)?
     }
+    wallet_ref.update_swap_coins_list()?;
     println!("successfully completed coinswap");
     Ok(None)
 }

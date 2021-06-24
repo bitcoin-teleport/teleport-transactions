@@ -382,8 +382,9 @@ async fn send_coinswap(
     );
 
     for incoming_swapcoin in incoming_swapcoins {
-        wallet.add_swapcoin(incoming_swapcoin).unwrap();
+        wallet.add_swapcoin(incoming_swapcoin);
     }
+    wallet.update_swap_coins_list().unwrap();
     println!("successfully completed coinswap");
     Ok(())
 }

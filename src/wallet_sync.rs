@@ -287,10 +287,9 @@ impl Wallet {
         self.swap_coins.get_mut(multisig_redeemscript)
     }
 
-    pub fn add_swapcoin(&mut self, coin: WalletSwapCoin) -> Result<(), Error> {
+    pub fn add_swapcoin(&mut self, coin: WalletSwapCoin) {
         self.swap_coins
             .insert(coin.get_multisig_redeemscript(), coin);
-        self.update_swap_coins_list()
     }
 
     #[cfg(test)]
