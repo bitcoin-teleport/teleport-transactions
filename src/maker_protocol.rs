@@ -6,9 +6,9 @@ use tokio::io::BufReader;
 use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
-use tokio::time::sleep;
 use tokio::select;
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 use serde_json::Value;
 
@@ -19,6 +19,9 @@ use bitcoincore_rpc::{Client, RpcApi};
 
 use itertools::izip;
 
+use crate::contracts;
+use crate::contracts::SwapCoin;
+use crate::contracts::{find_funding_output, read_hashvalue_from_contract};
 use crate::error::Error;
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
@@ -27,9 +30,6 @@ use crate::messages::{
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
 use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
-use crate::contracts;
-use crate::contracts::SwapCoin;
-use crate::contracts::{find_funding_output, read_hashvalue_from_contract};
 
 //TODO
 //this using of strings to indicate allowed methods doesnt fit aesthetically
@@ -144,7 +144,10 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 };
                 #[cfg(test)]
                 if line == "kill".to_string() {
-                    server_loop_comms_tx.send(Error::Protocol("kill signal")).await.unwrap();
+                    server_loop_comms_tx
+                        .send(Error::Protocol("kill signal"))
+                        .await
+                        .unwrap();
                     println!("Kill signal received, stopping maker....");
                     break;
                 }
@@ -171,8 +174,12 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                         match err {
                             Error::Network(_e) => (),
                             Error::Protocol(_e) => (),
-                            Error::Disk(e) => server_loop_comms_tx.send(Error::Disk(e)).await.unwrap(),
-                            Error::Rpc(e) => server_loop_comms_tx.send(Error::Rpc(e)).await.unwrap(),
+                            Error::Disk(e) => {
+                                server_loop_comms_tx.send(Error::Disk(e)).await.unwrap()
+                            }
+                            Error::Rpc(e) => {
+                                server_loop_comms_tx.send(Error::Rpc(e)).await.unwrap()
+                            }
                         };
                         break;
                     }
