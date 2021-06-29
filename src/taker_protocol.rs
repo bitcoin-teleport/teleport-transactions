@@ -85,17 +85,16 @@ async fn send_coinswap(
         mut this_maker_hashlock_privkeys,
     ) = generate_maker_multisig_and_hashlock_keys(&first_maker.offer.tweakable_point, my_tx_count);
 
-    let (my_funding_txes, mut outgoing_swapcoins, my_timelock_pubkeys, _my_timelock_privkeys) =
-        wallet
-            .initalize_coinswap(
-                rpc,
-                amount,
-                &first_maker_multisig_pubkeys,
-                &first_maker_hashlock_pubkeys,
-                hashvalue,
-                first_swap_locktime,
-            )
-            .unwrap();
+    let (my_funding_txes, mut outgoing_swapcoins, my_timelock_pubkeys) = wallet
+        .initalize_coinswap(
+            rpc,
+            amount,
+            &first_maker_multisig_pubkeys,
+            &first_maker_hashlock_pubkeys,
+            hashvalue,
+            first_swap_locktime,
+        )
+        .unwrap();
 
     let first_maker_senders_contract_sigs = request_senders_contract_tx_signatures(
         &first_maker.address,
@@ -258,6 +257,7 @@ async fn send_coinswap(
                 &maker_sign_sender_and_receiver_contracts,
                 &funding_txes,
                 &next_swap_contract_redeemscripts,
+                &next_peer_hashlock_keys_or_nonces,
                 &next_peer_multisig_pubkeys,
                 &next_peer_multisig_keys_or_nonces,
                 preimage,
@@ -890,6 +890,7 @@ fn create_incoming_swapcoins(
     maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
     funding_txes: &[Transaction],
     next_swap_contract_redeemscripts: &[Script],
+    next_peer_hashlock_keys_or_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_multisig_keys_or_nonces: &[SecretKey],
     preimage: [u8; 32],
@@ -941,6 +942,7 @@ fn create_incoming_swapcoins(
         &maker_funded_multisig_privkey,
         my_receivers_contract_tx,
         next_contract_redeemscript,
+        &hashlock_privkey,
         &maker_funding_tx_value,
     ) in izip!(
         next_swap_multisig_redeemscripts.iter(),
@@ -948,6 +950,7 @@ fn create_incoming_swapcoins(
         next_peer_multisig_keys_or_nonces.iter(),
         my_receivers_contract_txes.iter(),
         next_swap_contract_redeemscripts.iter(),
+        next_peer_hashlock_keys_or_nonces.iter(),
         last_makers_funding_tx_values.iter(),
     ) {
         let (o_ms_pubkey1, o_ms_pubkey2) =
@@ -967,6 +970,7 @@ fn create_incoming_swapcoins(
             maker_funded_other_multisig_pubkey,
             my_receivers_contract_tx.clone(),
             next_contract_redeemscript.clone(),
+            hashlock_privkey,
             maker_funding_tx_value,
         );
         incoming_swapcoin.hash_preimage = Some(preimage);

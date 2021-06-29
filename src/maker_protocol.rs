@@ -314,7 +314,7 @@ fn handle_proof_of_funding(
 ) -> Result<Option<MakerToTakerMessage>, Error> {
     let mut funding_output_indexes = Vec::<u32>::new();
     let mut funding_outputs = Vec::<&TxOut>::new();
-    let mut incoming_swapcoin_keys = Vec::<(SecretKey, PublicKey)>::new();
+    let mut incoming_swapcoin_keys = Vec::<(SecretKey, PublicKey, SecretKey)>::new();
     if proof.confirmed_funding_txes.len() == 0 {
         return Err(Error::Protocol("zero funding txes provided"));
     }
@@ -391,7 +391,7 @@ fn handle_proof_of_funding(
             funding_output.value,
             &funding_info.contract_redeemscript,
         );
-        let (coin_privkey, coin_other_pubkey) = incoming_swapcoin_keys;
+        let (coin_privkey, coin_other_pubkey, hashlock_privkey) = incoming_swapcoin_keys;
         println!(
             "adding incoming_swapcoin contract_tx = {:?} fo = {:?}",
             my_receivers_contract_tx.clone(),
@@ -406,6 +406,7 @@ fn handle_proof_of_funding(
                 coin_other_pubkey,
                 my_receivers_contract_tx.clone(),
                 funding_info.contract_redeemscript.clone(),
+                hashlock_privkey,
                 funding_output.value,
             ));
     }
@@ -416,7 +417,7 @@ fn handle_proof_of_funding(
     println!("incoming amount = {}", incoming_amount);
     let amount = incoming_amount - coinswap_fees;
 
-    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys, _timelock_privkeys) =
+    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys) =
         wallet.write().unwrap().initalize_coinswap(
             &rpc,
             amount,

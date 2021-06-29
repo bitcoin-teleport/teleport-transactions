@@ -121,6 +121,18 @@ fn read_locktime_from_contract(redeemscript: &Script) -> Option<i64> {
     }
 }
 
+pub fn read_hashlock_pubkey_from_contract(
+    redeemscript: &Script,
+) -> Result<PublicKey, bitcoin::util::key::Error> {
+    PublicKey::from_slice(&redeemscript.to_bytes()[27..60])
+}
+
+pub fn read_timelock_pubkey_from_contract(
+    redeemscript: &Script,
+) -> Result<PublicKey, bitcoin::util::key::Error> {
+    PublicKey::from_slice(&redeemscript.to_bytes()[65..98])
+}
+
 pub fn read_pubkeys_from_multisig_redeemscript(
     redeemscript: &Script,
 ) -> Option<(PublicKey, PublicKey)> {
@@ -276,7 +288,8 @@ pub fn verify_proof_of_funding(
     funding_info: &ConfirmedCoinSwapTxInfo,
     funding_output_index: u32,
     next_locktime: i64,
-) -> Result<(SecretKey, PublicKey), Error> {
+    //returns my_multisig_privkey, other_multisig_pubkey, my_hashlock_privkey
+) -> Result<(SecretKey, PublicKey, SecretKey), Error> {
     //check the funding_tx exists and was really confirmed
     if let Some(txout) =
         rpc.get_tx_out(&funding_info.funding_tx.txid(), funding_output_index, None)?
@@ -329,6 +342,19 @@ pub fn verify_proof_of_funding(
         return Err(Error::Protocol("locktime too short"));
     }
 
+    //check that provided hashlock_key_nonce really corresponds to the hashlock_pubkey in contract
+    let contract_hashlock_pubkey =
+        read_hashlock_pubkey_from_contract(&funding_info.contract_redeemscript)
+            .map_err(|_| Error::Protocol("unable to read hashlock pubkey from contract"))?;
+    let derived_hashlock_pubkey =
+        calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.hashlock_key_nonce)
+            .map_err(|_| Error::Protocol("unable to calculate maker pubkey from nonce"))?;
+    if contract_hashlock_pubkey != derived_hashlock_pubkey {
+        return Err(Error::Protocol(
+            "contract hashlock pubkey doesnt match key derived from nonce",
+        ));
+    }
+
     //check that the provided contract matches the scriptpubkey from the
     //cache which was populated when the signsendercontracttx message arrived
     let contract_spk = Address::p2wsh(&funding_info.contract_redeemscript, NETWORK).script_pubkey();
@@ -349,13 +375,17 @@ pub fn verify_proof_of_funding(
     my_privkey
         .add_assign(funding_info.multisig_key_nonce.as_ref())
         .map_err(|_| Error::Protocol("error with wallet tweakable privkey + nonce"))?;
+    let mut hashlock_privkey = tweakable_privkey;
+    hashlock_privkey
+        .add_assign(funding_info.hashlock_key_nonce.as_ref())
+        .map_err(|_| Error::Protocol("error with wallet tweakable privkey + nonce"))?;
 
     let other_pubkey = if pubkey1 == my_pubkey {
         pubkey2
     } else {
         pubkey1
     };
-    Ok((my_privkey, other_pubkey))
+    Ok((my_privkey, other_pubkey, hashlock_privkey))
 }
 
 pub fn validate_contract_tx(

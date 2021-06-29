@@ -93,10 +93,15 @@ pub struct WalletSwapCoin {
     pub other_privkey: Option<SecretKey>,
     pub contract_tx: Transaction,
     pub contract_redeemscript: Script,
+    //either timelock_privkey for outgoing swapcoins or hashlock_privkey for incoming swapcoins
+    pub contract_privkey: SecretKey,
     pub funding_amount: u64,
     pub others_contract_sig: Option<Signature>,
     pub hash_preimage: Option<[u8; 32]>,
 }
+//TODO split WalletSwapCoin into two structs, IncomingSwapCoin and OutgoingSwapCoin
+//where Incoming has hashlock_privkey and Outgoing has timelock_privkey
+//that is a much more rustic way of doing things, which uses the compiler to check for some bugs
 
 impl WalletSwapCoin {
     pub fn new(
@@ -104,14 +109,26 @@ impl WalletSwapCoin {
         other_pubkey: PublicKey,
         contract_tx: Transaction,
         contract_redeemscript: Script,
+        contract_privkey: SecretKey,
         funding_amount: u64,
     ) -> WalletSwapCoin {
+        let secp = Secp256k1::new();
+        let contract_pubkey = PublicKey {
+            compressed: true,
+            key: secp256k1::PublicKey::from_secret_key(&secp, &contract_privkey),
+        };
+        assert!(contract_pubkey ==
+            contracts::read_hashlock_pubkey_from_contract(&contract_redeemscript).unwrap() ||
+                contract_pubkey ==
+            contracts::read_timelock_pubkey_from_contract(&contract_redeemscript).unwrap()
+        );
         WalletSwapCoin {
             my_privkey,
             other_pubkey,
             other_privkey: None,
             contract_tx,
             contract_redeemscript,
+            contract_privkey,
             funding_amount,
             others_contract_sig: None,
             hash_preimage: None,
@@ -984,16 +1001,8 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: [u8; 20],
-        locktime: i64, //returns: funding_tx, swapcoin, timelock_pubkey, timelock_privkey
-    ) -> Result<
-        (
-            Vec<Transaction>,
-            Vec<WalletSwapCoin>,
-            Vec<PublicKey>,
-            Vec<SecretKey>,
-        ),
-        Error,
-    > {
+        locktime: i64, //returns: funding_txes, swapcoins, timelock_pubkeys
+    ) -> Result<(Vec<Transaction>, Vec<WalletSwapCoin>, Vec<PublicKey>), Error> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
@@ -1007,7 +1016,6 @@ impl Wallet {
         // an integer but also can be Sweep
 
         let mut timelock_pubkeys = Vec::<PublicKey>::new();
-        let mut timelock_privkeys = Vec::<SecretKey>::new();
         let mut outgoing_swapcoins = Vec::<WalletSwapCoin>::new();
 
         for (
@@ -1042,22 +1050,17 @@ impl Wallet {
             );
 
             timelock_pubkeys.push(timelock_pubkey);
-            timelock_privkeys.push(timelock_privkey);
             outgoing_swapcoins.push(WalletSwapCoin::new(
                 my_multisig_privkey,
                 other_multisig_pubkey,
                 my_senders_contract_tx,
                 contract_redeemscript,
+                timelock_privkey,
                 funding_amount,
             ));
         }
 
-        Ok((
-            my_funding_txes,
-            outgoing_swapcoins,
-            timelock_pubkeys,
-            timelock_privkeys,
-        ))
+        Ok((my_funding_txes, outgoing_swapcoins, timelock_pubkeys))
     }
 }
 
