@@ -117,10 +117,12 @@ impl WalletSwapCoin {
             compressed: true,
             key: secp256k1::PublicKey::from_secret_key(&secp, &contract_privkey),
         };
-        assert!(contract_pubkey ==
-            contracts::read_hashlock_pubkey_from_contract(&contract_redeemscript).unwrap() ||
-                contract_pubkey ==
-            contracts::read_timelock_pubkey_from_contract(&contract_redeemscript).unwrap()
+        assert!(
+            contract_pubkey
+                == contracts::read_hashlock_pubkey_from_contract(&contract_redeemscript).unwrap()
+                || contract_pubkey
+                    == contracts::read_timelock_pubkey_from_contract(&contract_redeemscript)
+                        .unwrap()
         );
         WalletSwapCoin {
             my_privkey,
@@ -833,6 +835,7 @@ impl Wallet {
                 Some(WalletCreateFundedPsbtOptions {
                     include_watching: Some(true),
                     change_address: Some(change_address.clone()),
+                    fee_rate: Some(Amount::from_btc(0.0001).unwrap()),
                     ..Default::default()
                 }),
                 None,
