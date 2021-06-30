@@ -111,6 +111,11 @@ async fn send_coinswap(
         .zip(outgoing_swapcoins.iter_mut())
         .for_each(|(sig, outgoing_swapcoin)| outgoing_swapcoin.others_contract_sig = Some(*sig));
 
+    for outgoing_swapcoin in &outgoing_swapcoins {
+        wallet.add_swapcoin(outgoing_swapcoin.clone());
+    }
+    wallet.update_swap_coins_list().unwrap();
+
     for my_funding_tx in my_funding_txes.iter() {
         let txid = rpc.send_raw_transaction(my_funding_tx)?;
         assert_eq!(txid, my_funding_tx.txid());
@@ -283,6 +288,10 @@ async fn send_coinswap(
     {
         incoming_swapcoin.others_contract_sig = Some(receiver_contract_sig);
     }
+    for incoming_swapcoin in &incoming_swapcoins {
+        wallet.add_swapcoin(incoming_swapcoin.clone());
+    }
+    wallet.update_swap_coins_list().unwrap();
 
     let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
     println!(
@@ -375,10 +384,15 @@ async fn send_coinswap(
             .collect::<Vec<_>>()
     );
 
-    for incoming_swapcoin in incoming_swapcoins {
-        wallet.add_swapcoin(incoming_swapcoin);
+    //update incoming_swapcoins with privkey on disk here
+    for incoming_swapcoin in &incoming_swapcoins {
+        wallet
+            .find_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
+            .unwrap()
+            .other_privkey = incoming_swapcoin.other_privkey;
     }
     wallet.update_swap_coins_list().unwrap();
+
     println!("successfully completed coinswap");
     Ok(())
 }
