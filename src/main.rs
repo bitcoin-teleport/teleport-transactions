@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use bitcoin::hashes::hex::ToHex;
+use bitcoin::secp256k1::Secp256k1;
+use bitcoin::util::key::PublicKey;
 use bitcoin::Amount;
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
@@ -18,6 +20,11 @@ mod wallet_sync;
 use wallet_sync::Wallet;
 
 mod contracts;
+use contracts::{
+    read_hashlock_pubkey_from_contract, read_locktime_from_contract,
+    read_timelock_pubkey_from_contract,
+};
+
 mod error;
 mod maker_protocol;
 mod messages;
@@ -140,6 +147,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
     let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+    println!("= wallet balance =");
     println!(
         "{:16} {:24} {:8} {:<7} value",
         "outpoint", "address", "swapcoin", "conf",
@@ -164,6 +172,62 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     }
     println!("coin count = {}", utxo_count);
     println!("total balance = {}", balance);
+
+    let secp = Secp256k1::new();
+    let incomplete_coinswaps = wallet.find_incomplete_coinswaps(&rpc).unwrap();
+    if incomplete_coinswaps.len() > 0 {
+        println!("= incomplete coinswaps =");
+        for (hashvalue, utxo_swapcoins) in incomplete_coinswaps {
+            let balance: Amount = utxo_swapcoins
+                .iter()
+                .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
+            println!(
+                "{:16} {:8} {:8} {:<15} {:<7} value",
+                "outpoint", "type", "preimage", "locktime/blocks", "conf",
+            );
+            for (utxo, swapcoin) in utxo_swapcoins {
+                let txid = utxo.txid.to_hex();
+                let contract_pubkey = PublicKey {
+                    compressed: true,
+                    key: bitcoin::secp256k1::PublicKey::from_secret_key(
+                        &secp,
+                        &swapcoin.contract_privkey,
+                    ),
+                };
+                let type_string = if contract_pubkey
+                    == read_hashlock_pubkey_from_contract(&swapcoin.contract_redeemscript).unwrap()
+                {
+                    "hashlock"
+                } else {
+                    assert_eq!(
+                        contract_pubkey,
+                        read_timelock_pubkey_from_contract(&swapcoin.contract_redeemscript)
+                            .unwrap()
+                    );
+                    "timelock"
+                };
+
+                #[rustfmt::skip]
+                println!("{}{}{}:{} {:8} {:8} {:^15} {:<7} {}",
+                    if long_form { &txid } else {&txid[0..6] },
+                    if long_form { "" } else { ".." },
+                    if long_form { &"" } else { &txid[58..64] },
+                    utxo.vout,
+                    type_string,
+                    if swapcoin.hash_preimage.is_some() { "known" } else { "unknown" },
+                    read_locktime_from_contract(&swapcoin.contract_redeemscript)
+                        .expect("unable to read locktime from contract"),
+                    utxo.confirmations,
+                    utxo.amount
+                );
+            }
+            println!(
+                "hashvalue = {}\ntotal balance = {}",
+                &hashvalue.to_hex()[..],
+                balance
+            );
+        }
+    }
 }
 
 fn display_wallet_keys(wallet_file_name: &PathBuf) {

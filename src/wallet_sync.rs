@@ -10,7 +10,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use itertools::izip;
 
@@ -46,7 +46,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::contracts;
-use crate::contracts::SwapCoin;
+use crate::contracts::{read_hashvalue_from_contract, SwapCoin};
 use crate::error::Error;
 
 //these subroutines are coded so that as much as possible they keep all their
@@ -539,7 +539,7 @@ impl Wallet {
         Ok(())
     }
 
-    fn is_utxo_ours(&self, u: &ListUnspentResultEntry) -> bool {
+    fn is_utxo_ours_and_spendable(&self, u: &ListUnspentResultEntry) -> bool {
         if u.descriptor.is_none() {
             return false;
         }
@@ -573,7 +573,7 @@ impl Wallet {
         let all_unspents = rpc.list_unspent(None, None, None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
-            .filter(|u| !self.is_utxo_ours(u))
+            .filter(|u| !self.is_utxo_ours_and_spendable(u))
             .map(|u| OutPoint {
                 txid: u.txid,
                 vout: u.vout,
@@ -592,9 +592,56 @@ impl Wallet {
         Ok(rpc
             .list_unspent(None, None, None, None, None)?
             .iter()
-            .filter(|u| self.is_utxo_ours(u))
+            .filter(|u| self.is_utxo_ours_and_spendable(u))
             .cloned()
             .collect::<Vec<ListUnspentResultEntry>>())
+    }
+
+    pub fn find_incomplete_coinswaps(
+        &self,
+        rpc: &Client,
+    ) -> Result<HashMap<[u8; 20], Vec<(ListUnspentResultEntry, &WalletSwapCoin)>>, Error> {
+        rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
+            .map_err(|e| Error::Rpc(e))?;
+
+        let completed_coinswap_hashvalues = self
+            .swap_coins
+            .values()
+            .filter(|sc| sc.other_privkey.is_some())
+            .map(|sc| read_hashvalue_from_contract(&sc.contract_redeemscript).unwrap())
+            .collect::<HashSet<[u8; 20]>>();
+        //TODO make this read_hashvalue_from_contract() a struct function of WalletCoinSwap
+
+        let mut incomplete_swapcoin_groups =
+            HashMap::<[u8; 20], Vec<(ListUnspentResultEntry, &WalletSwapCoin)>>::new();
+        for utxo in rpc.list_unspent(None, None, None, None, None)? {
+            if utxo.descriptor.is_none() {
+                continue;
+            }
+            let multisig_redeemscript = if let Some(rs) = utxo.witness_script.as_ref() {
+                rs
+            } else {
+                continue;
+            };
+            let swapcoin = if let Some(s) = self.find_swapcoin(multisig_redeemscript) {
+                s
+            } else {
+                continue;
+            };
+            if swapcoin.other_privkey.is_some() {
+                continue;
+            }
+            let swapcoin_hashvalue = read_hashvalue_from_contract(&swapcoin.contract_redeemscript)
+                .expect("unable to read hashvalue from contract_redeemscript");
+            if completed_coinswap_hashvalues.contains(&swapcoin_hashvalue) {
+                continue;
+            }
+            incomplete_swapcoin_groups
+                .entry(swapcoin_hashvalue)
+                .or_insert(Vec::<(ListUnspentResultEntry, &WalletSwapCoin)>::new())
+                .push((utxo, swapcoin));
+        }
+        Ok(incomplete_swapcoin_groups)
     }
 
     // returns None if not a hd descriptor (but possibly a swapcoin (multisig) descriptor instead)
