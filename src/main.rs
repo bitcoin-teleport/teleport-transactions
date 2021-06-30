@@ -478,7 +478,7 @@ mod test {
         let maker2 = Wallet::load_wallet_from_file(&MAKER2).unwrap();
 
         // Check assertions
-        assert_eq!(taker.get_swap_coins_count(), 3);
+        assert_eq!(taker.get_swap_coins_count(), 6);
         assert_eq!(maker1.get_swap_coins_count(), 6);
         assert_eq!(maker2.get_swap_coins_count(), 6);
 
