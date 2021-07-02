@@ -66,7 +66,7 @@ struct ConnectionState {
 async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result<(), Error> {
     //TODO port number in config file
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
-    println!("listening on port {}", port);
+    log::trace!(target: "maker", "listening on port {}", port);
 
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
@@ -133,7 +133,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(n) if n == 0 => {
-                        println!("reached EOF");
+                        log::trace!(target: "maker", "reached EOF");
                         break;
                     }
                     Ok(_n) => (),
@@ -229,7 +229,7 @@ fn handle_message(
         Ok(r) => r,
         Err(_e) => return Err(Error::Protocol("message parsing error")),
     };
-    println!("<== {:?}", request);
+    log::trace!(target: "maker", "<== {:?}", request);
     let outgoing_message = match request {
         TakerToMakerMessage::TakerHello(_message) => {
             connection_state.allowed_method = None;
@@ -271,7 +271,7 @@ fn handle_message(
             handle_private_key_handover(wallet, message)?
         }
     };
-    println!("==> {:?}", outgoing_message);
+    log::trace!(target: "maker", "==> {:?}", outgoing_message);
     match outgoing_message {
         Some(result) => Ok(Some(result)),
         None => Ok(None),
@@ -321,7 +321,7 @@ fn handle_proof_of_funding(
     for funding_info in &proof.confirmed_funding_txes {
         //check that the claimed multisig redeemscript is in the transaction
 
-        println!(
+        log::trace!(target: "maker",
             "tx = {:?}\nms_rs = {:x}",
             funding_info.funding_tx, funding_info.multisig_redeemscript
         );
@@ -364,7 +364,7 @@ fn handle_proof_of_funding(
         }
     }
 
-    println!("proof of funding valid, creating own funding txes");
+    log::trace!(target: "maker", "proof of funding valid, creating own funding txes");
 
     connection_state.incoming_swapcoins = Some(Vec::<WalletSwapCoin>::new());
     for (funding_info, &funding_output_index, &funding_output, &incoming_swapcoin_keys) in izip!(
@@ -414,7 +414,7 @@ fn handle_proof_of_funding(
     //set up the next coinswap address in the route
     let coinswap_fees = 10000; //TODO calculate them properly
     let incoming_amount = funding_outputs.iter().map(|o| o.value).sum::<u64>();
-    println!("incoming amount = {}", incoming_amount);
+    log::trace!(target: "maker", "incoming amount = {}", incoming_amount);
     let amount = incoming_amount - coinswap_fees;
 
     let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys) =
@@ -435,11 +435,11 @@ fn handle_proof_of_funding(
             proof.next_locktime,
         )?;
 
-    println!("my_funding_txes = {:?}", my_funding_txes);
+    log::trace!(target: "maker", "my_funding_txes = {:?}", my_funding_txes);
 
     connection_state.pending_funding_txes = Some(my_funding_txes);
     connection_state.outgoing_swapcoins = Some(outgoing_swapcoins);
-    println!(
+    log::trace!(target: "maker",
         "incoming_swapcoins = {:?}\noutgoing_swapcoins = {:?}",
         connection_state.incoming_swapcoins, connection_state.outgoing_swapcoins,
     );
@@ -529,13 +529,13 @@ fn handle_senders_and_receivers_contract_sigs(
     //TODO add coin to watchtowers
 
     for my_funding_tx in connection_state.pending_funding_txes.as_ref().unwrap() {
-        println!(
+        log::trace!(target: "maker",
             "broadcasting tx = {}",
             bitcoin::consensus::encode::serialize_hex(my_funding_tx)
         );
         let txid = rpc.send_raw_transaction(my_funding_tx)?;
         assert_eq!(txid, my_funding_tx.txid());
-        println!("broadcasted my funding tx, txid={}", txid);
+        log::trace!(target: "maker", "broadcasted my funding tx, txid={}", txid);
     }
 
     //set these to None which might be helpful in picking up logic errors later

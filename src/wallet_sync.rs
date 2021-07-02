@@ -495,7 +495,7 @@ impl Wallet {
             return Ok(());
         }
 
-        println!("new wallet detected, synchronizing balance...");
+        log::trace!(target: "wallet", "new wallet detected, synchronizing balance...");
         self.import_initial_addresses(
             rpc,
             &hd_descriptors_to_import,
@@ -529,7 +529,7 @@ impl Wallet {
                     &[Value::String(rawtx_hex), Value::String(merkleproof)],
                 )?;
             } else {
-                println!("block pruned, TODO add UTXO to wallet file");
+                log::error!(target: "wallet", "block pruned, TODO add UTXO to wallet file");
                 panic!("teleport doesnt work with pruning yet, try rescanning");
             }
         }
@@ -616,7 +616,7 @@ impl Wallet {
         }
         let addr_type = path_chunks[1].parse::<u32>();
         if addr_type.is_err() {
-            println!("unexpected address_type = {}", path);
+            log::trace!(target: "wallet", "unexpected address_type = {}", path);
             return None;
         }
         let index = path_chunks[2].parse::<i32>();
@@ -823,7 +823,7 @@ impl Wallet {
             output_values.iter(),
             change_addresses.iter()
         ) {
-            println!("output_value = {} to addr={}", output_value, address);
+            log::trace!(target: "wallet", "output_value = {} to addr={}", output_value, address);
 
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
@@ -886,7 +886,7 @@ impl Wallet {
             };
             self.sign_transaction(&mut spending_tx, &decoded_psbt);
 
-            println!(
+            log::trace!(target: "wallet",
                 "txhex = {}",
                 bitcoin::consensus::encode::serialize_hex(&spending_tx)
             );
@@ -1010,7 +1010,7 @@ impl Wallet {
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
             .unzip();
-        println!("coinswap_addresses = {:#?}", coinswap_addresses);
+        log::trace!(target: "wallet", "coinswap_addresses = {:#?}", coinswap_addresses);
 
         let (my_funding_txes, utxo_indexes, funding_amounts) =
             self.create_spending_txes(rpc, total_coinswap_amount, &coinswap_addresses)?;

@@ -46,13 +46,13 @@ use crate::wallet_sync::{generate_keypair, CoreAddressLabelType, Wallet, WalletS
 pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
     match run(rpc, wallet).await {
         Ok(_o) => (),
-        Err(e) => println!("err {:?}", e),
+        Err(e) => log::trace!(target: "taker", "err {:?}", e),
     };
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet) -> Result<(), Error> {
     let mut offers_addresses = sync_offerbook().await;
-    println!("offers_addresses = {:?}", offers_addresses);
+    log::trace!(target: "taker", "offers_addresses = {:?}", offers_addresses);
 
     send_coinswap(rpc, wallet, &mut offers_addresses).await?;
     Ok(())
@@ -76,7 +76,7 @@ async fn send_coinswap(
 
     let first_maker = maker_offers_addresses.last().unwrap();
     let last_maker = maker_offers_addresses.first().unwrap().clone();
-    println!("coinswapping to first maker1 = {}", first_maker.address);
+    log::trace!(target: "taker", "coinswapping to first maker1 = {}", first_maker.address);
 
     let (
         first_maker_multisig_pubkeys,
@@ -131,7 +131,7 @@ async fn send_coinswap(
 
     for maker_index in 0..maker_count {
         let maker = maker_offers_addresses.pop().unwrap();
-        println!("coinswapping to maker = {:?}", maker.address);
+        log::trace!(target: "taker", "coinswapping to maker = {:?}", maker.address);
         let maker_refund_locktime =
             REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
         let is_taker_next_peer = maker_index == maker_count - 1;
@@ -285,7 +285,7 @@ async fn send_coinswap(
     }
 
     let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
-    println!(
+    log::trace!(target: "taker",
         "handing over hashvalue and privkeys to = {:?}",
         active_maker_addresses
     );
@@ -353,12 +353,12 @@ async fn send_coinswap(
         .await?;
     }
 
-    println!(
+    log::trace!(target: "taker",
         "my outgoing txes = {:#?}",
         my_funding_txes.iter().map(|t| t.txid()).collect::<Vec<_>>()
     );
     for (index, watchonly_swapcoin) in watchonly_swapcoins.iter().enumerate() {
-        println!(
+        log::trace!(target: "taker",
             "maker[{}] funding txes = {:#?}",
             index,
             watchonly_swapcoin
@@ -367,7 +367,7 @@ async fn send_coinswap(
                 .collect::<Vec<_>>()
         );
     }
-    println!(
+    log::trace!(target: "taker",
         "my incoming txes = {:#?}",
         incoming_swapcoins
             .iter()
@@ -403,14 +403,13 @@ async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTak
             "EOF",
         ))));
     }
-    //println!("<== {}", line.trim_end().to_string());
 
     let message: MakerToTakerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
         Err(_e) => return Err(Error::Protocol("json parsing error")),
     };
 
-    println!("<= {:?}", message);
+    log::trace!(target: "taker", "<= {:?}", message);
     Ok(message)
 }
 
@@ -437,7 +436,7 @@ async fn handshake_maker(
         } else {
             return Err(Error::Protocol("expected method makerhello"));
         };
-    println!(
+    log::trace!(target: "taker",
         "protocol version min/max = {}/{}",
         makerhello.protocol_version_min, makerhello.protocol_version_max
     );
@@ -629,7 +628,7 @@ async fn wait_for_funding_tx_confirmation(
             if gettx.info.confirmations >= 1 {
                 txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
                 txid_blockhash_map.insert(*txid, gettx.info.blockhash.unwrap());
-                println!("funding tx {} reached 1 confirmation(s)", txid);
+                log::trace!(target: "taker", "funding tx {} reached 1 confirmation(s)", txid);
             }
         }
         if txid_tx_map.len() == funding_txids.len() {
@@ -639,7 +638,7 @@ async fn wait_for_funding_tx_confirmation(
         #[cfg(test)]
         crate::test::generate_1_block(&get_bitcoin_rpc().unwrap());
     }
-    println!("funding transactions confirmed");
+    log::trace!(target: "taker", "funding transactions confirmed");
 
     let txes = funding_txids
         .iter()
