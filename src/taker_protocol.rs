@@ -66,7 +66,7 @@ async fn send_coinswap(
     let amount = 500000;
     let my_tx_count: u32 = 3;
     let maker_tx_count: u32 = 3;
-    let maker_count: i64 = 2;
+    let maker_count: u16 = 2;
 
     let mut preimage = [0u8; 32];
     OsRng.fill_bytes(&mut preimage);
@@ -291,7 +291,7 @@ async fn send_coinswap(
     );
     for (index, maker_address) in active_maker_addresses.iter().enumerate() {
         let is_taker_previous_peer = index == 0;
-        let is_taker_next_peer = (index as i64) == maker_count - 1;
+        let is_taker_next_peer = (index as u16) == maker_count - 1;
 
         let senders_multisig_redeemscripts = if is_taker_previous_peer {
             get_multisig_redeemscripts_from_swapcoins(&outgoing_swapcoins)
@@ -495,7 +495,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     maker_hashlock_nonces: &[SecretKey],
     timelock_pubkeys: &[PublicKey],
     hashvalue: [u8; 20],
-    locktime: i64,
+    locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
     println!(
         "requesting senders contract tx sig from maker = {}",
@@ -698,7 +698,7 @@ async fn send_proof_of_funding_and_get_contract_txes(
     this_maker_hashlock_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_hashlock_pubkeys: &[PublicKey],
-    maker_refund_locktime: i64,
+    maker_refund_locktime: u16,
     this_maker_contract_txes: &[Transaction],
     hashvalue: [u8; 20],
 ) -> Result<(SignSendersAndReceiversContractTxes, Vec<Script>), Error> {

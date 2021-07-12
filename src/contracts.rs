@@ -6,7 +6,7 @@ use std::convert::TryInto;
 use bitcoin::{
     blockdata::{
         opcodes,
-        script::{Builder, Script},
+        script::{Builder, Instruction, Script},
     },
     secp256k1,
     secp256k1::{Message, Secp256k1, SecretKey, Signature},
@@ -26,8 +26,8 @@ use crate::wallet_sync::{create_multisig_redeemscript, Wallet, WalletSwapCoin, N
 
 //TODO should be configurable somehow
 //relatively low value for now so that its easier to test on regtest
-pub const REFUND_LOCKTIME: i64 = 30; //in blocks
-pub const REFUND_LOCKTIME_STEP: i64 = 5; //in blocks
+pub const REFUND_LOCKTIME: u16 = 30; //in blocks
+pub const REFUND_LOCKTIME_STEP: u16 = 5; //in blocks
 
 //like the WalletSwapCoin struct but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
@@ -79,7 +79,7 @@ pub fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
     pub_timelock: &PublicKey,
     hashvalue: [u8; 20],
-    locktime: i64,
+    locktime: u16,
 ) -> Script {
     Builder::new()
         .push_opcode(opcodes::all::OP_SIZE)
@@ -94,7 +94,7 @@ pub fn create_contract_redeemscript(
         .push_opcode(opcodes::all::OP_ELSE)
             .push_key(&pub_timelock)
             .push_int(0)
-            .push_int(locktime)
+            .push_int(locktime as i64)
         .push_opcode(opcodes::all::OP_ENDIF)
         .push_opcode(opcodes::all::OP_CSV)
         .push_opcode(opcodes::all::OP_DROP)
@@ -109,13 +109,16 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<[u8; 20], T
     redeemscript.to_bytes()[4..24].try_into()
 }
 
-fn read_locktime_from_contract(redeemscript: &Script) -> Option<i64> {
-    //note that locktimes in these contracts are always 2 bytes
-    //so for example a locktime of 30 wont work, as the specific single opcode
-    //will be used instead
-    let rs = redeemscript.to_bytes();
-    if rs.len() > 101 {
-        Some(rs[100] as i64 | (rs[101] as i64) << 8)
+pub fn read_locktime_from_contract(redeemscript: &Script) -> Option<u16> {
+    if let Instruction::PushBytes(locktime_bytes) = redeemscript.instructions().nth(12)?.ok()? {
+        match locktime_bytes.len() {
+            1 => Some(locktime_bytes[0] as u16),
+            2 | 3 => {
+                let (int_bytes, _rest) = locktime_bytes.split_at(std::mem::size_of::<u16>());
+                Some(u16::from_le_bytes(int_bytes.try_into().unwrap()))
+            }
+            _ => None,
+        }
     } else {
         None
     }
@@ -184,7 +187,7 @@ fn is_contract_out_valid(
     hashlock_pubkey: &PublicKey,
     timelock_pubkey: &PublicKey,
     hashvalue: [u8; 20],
-    locktime: i64,
+    locktime: u16,
 ) -> Result<(), Error> {
     let minimum_locktime = 2; //TODO should be in config file or something
     if minimum_locktime > locktime {
@@ -213,7 +216,7 @@ pub fn validate_and_sign_senders_contract_tx(
     multisig_redeemscript: &Script,
     funding_input_value: u64,
     hashvalue: [u8; 20],
-    locktime: i64,
+    locktime: u16,
     tweakable_privkey: &SecretKey,
     wallet: &mut Wallet,
 ) -> Result<Signature, Error> {
@@ -287,7 +290,7 @@ pub fn verify_proof_of_funding(
     wallet: &mut Wallet,
     funding_info: &ConfirmedCoinSwapTxInfo,
     funding_output_index: u32,
-    next_locktime: i64,
+    next_locktime: u16,
     //returns my_multisig_privkey, other_multisig_pubkey, my_hashlock_privkey
 ) -> Result<(SecretKey, PublicKey, SecretKey), Error> {
     //check the funding_tx exists and was really confirmed
@@ -337,7 +340,7 @@ pub fn verify_proof_of_funding(
     //this is the time the maker or his watchtowers have to be online, read
     // the hash preimage from the blockchain and broadcast their own tx
     //TODO put this in a config file perhaps, and have it advertised to takers
-    const CONTRACT_REACT_TIME: i64 = 3;
+    const CONTRACT_REACT_TIME: u16 = 3;
     if locktime - next_locktime < CONTRACT_REACT_TIME {
         return Err(Error::Protocol("locktime too short"));
     }
@@ -682,9 +685,10 @@ mod test {
 
         // Use an u16 to strictly positive 2 byte integer
         let locktime = rand::random::<u16>();
+        println!("randomly chosen locktime = {}", locktime);
 
         let contract_script =
-            create_contract_redeemscript(&pub_hashlock, &pub_timelock, hashvalue, locktime as i64);
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, hashvalue, locktime);
 
         // Get the byte encoded locktime for script
         let locktime_bytecode = Builder::new().push_int(locktime as i64).into_script();
@@ -709,7 +713,7 @@ mod test {
         );
         assert_eq!(
             read_locktime_from_contract(&contract_script).unwrap(),
-            locktime as i64
+            locktime
         );
     }
 
@@ -782,7 +786,10 @@ mod test {
 
     #[test]
     fn test_contract_tx_miscellaneous() {
-        let contract_script = Script::from(Vec::from_hex("827ca914c02fc3c5eeb7831f3a22dcc11e7b539604713a3c876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000372ad0068b2757b88ac").unwrap());
+        let contract_script = Script::from(Vec::from_hex(
+            "827ca91414cdf8fe0b7b2db2bd976f27fb6f3cd5f9228633876321038cc778b555c3fe2b01d1b550a07\
+            d26e38c026c4c4e1dee2a41f0431283230ee0012051672102b6b9ab72d42fb625a24598a792fa5346aa\
+            64d728b446f7560f4ce1c29378b22c00012868b2757b88ac").unwrap());
 
         // Contract transaction spending utxo, randomly choosen
         let spending_utxo = OutPoint::from_str(
@@ -794,7 +801,11 @@ mod test {
         let contract_tx = create_receivers_contract_tx(spending_utxo, 30000, &contract_script);
 
         // Check creation matches expectation
-        let expected_tx_hex = String::from("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a00000000000000000148710000000000002200209ecbb62af70dbbb91faabe010780e3c9dc1b2b25593733a89626b3c05191cfa200000000");
+        let expected_tx_hex = String::from(
+            "020000000156944c5d3f98413ef45cf54545538103cc9f298e057\
+            5820ad3591376e2e0f65d2a0000000000000000014871000000000000220020046134873fba03e9b2c961\
+            1f814d323e0772ced538f04c242b7a833018d58f3500000000",
+        );
         let expected_tx: Transaction =
             deserialize(&Vec::from_hex(&expected_tx_hex).unwrap()).unwrap();
         assert_eq!(expected_tx, contract_tx);

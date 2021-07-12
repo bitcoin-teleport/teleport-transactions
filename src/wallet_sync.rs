@@ -1004,7 +1004,7 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: [u8; 20],
-        locktime: i64, //returns: funding_txes, swapcoins, timelock_pubkeys
+        locktime: u16, //returns: funding_txes, swapcoins, timelock_pubkeys
     ) -> Result<(Vec<Transaction>, Vec<WalletSwapCoin>, Vec<PublicKey>), Error> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()

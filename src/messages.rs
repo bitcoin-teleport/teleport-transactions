@@ -38,7 +38,7 @@ pub struct SenderContractTxNoncesInfo {
 pub struct SignSendersContractTx {
     pub txes_info: Vec<SenderContractTxNoncesInfo>,
     pub hashvalue: [u8; 20],
-    pub locktime: i64,
+    pub locktime: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ pub struct NextCoinSwapTxInfo {
 pub struct ProofOfFunding {
     pub confirmed_funding_txes: Vec<ConfirmedCoinSwapTxInfo>,
     pub next_coinswap_info: Vec<NextCoinSwapTxInfo>,
-    pub next_locktime: i64,
+    pub next_locktime: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
