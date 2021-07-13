@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -31,19 +32,75 @@ use crate::messages::{
 };
 use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
 
-//TODO
-//this using of strings to indicate allowed methods doesnt fit aesthetically
-//with the using of structs and serde as in messages.rs
-//there is also no additional checking by the compiler
-//ideally this array and the other strings in this file would instead be
-//structs, however i havent had time to figure out if rust can do this
-pub const NEWLY_CONNECTED_TAKER_ALLOWED_METHODS: [&str; 5] = [
-    "giveoffer",
-    "signsenderscontracttx",
-    "proofoffunding",
-    "signreceiverscontracttx",
-    "hashpreimage",
-];
+// A structure denoting expectation of type of taker message.
+// Used in the [ConnectionState] structure.
+//
+// If the recieved message doesn't match expected method,
+// protocol error will be returned.
+//
+// A new taker at the begining will be able to send
+// a set of allowed message type denoted in ExpectedMethod::for_new_taker()
+// function call.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ExpectedMessage {
+    // Expecting Hello from a new taker
+    TakerHello,
+
+    // Give Offer
+    GiveOffer,
+
+    // Sign sender's contract
+    SignSendersContractTx,
+
+    // Proof of funding
+    ProofOfFunding,
+
+    // Contract Sigs
+    SendersAndReceiversContractSigs,
+
+    //Sign reciever's contract
+    SignReceiversContractTx,
+
+    // Hash preimage
+    HashPreimage,
+
+    // Private key handover
+    PrivateKeyHandover,
+}
+
+// TODO: Try convertion from serde_json::Value
+impl TryFrom<&str> for ExpectedMessage {
+    type Error = Error;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        match input {
+            "takerhello" => Ok(ExpectedMessage::TakerHello),
+            "giveoffer" => Ok(ExpectedMessage::GiveOffer),
+            "signsenderscontracttx" => Ok(ExpectedMessage::SignSendersContractTx),
+            "proofoffunding" => Ok(ExpectedMessage::ProofOfFunding),
+            "sendersandreceiverscontractsigs" => {
+                Ok(ExpectedMessage::SendersAndReceiversContractSigs)
+            }
+            "signreceiverscontracttx" => Ok(ExpectedMessage::SignReceiversContractTx),
+            "hashpreimage" => Ok(ExpectedMessage::HashPreimage),
+            "privatekeyhandover" => Ok(ExpectedMessage::PrivateKeyHandover),
+            _ => Err(Error::Protocol("Unknown Method")),
+        }
+    }
+}
+
+impl ExpectedMessage {
+    // A new taker will be able to send following message types
+    fn for_new_taker() -> Vec<Self> {
+        vec![
+            Self::GiveOffer,
+            Self::SignSendersContractTx,
+            Self::ProofOfFunding,
+            Self::SignReceiversContractTx,
+            Self::HashPreimage,
+        ]
+    }
+}
 
 #[tokio::main]
 pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) {
@@ -54,10 +111,10 @@ pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u1
 }
 
 struct ConnectionState {
-    //Some means there is just one method the taker is allowed to send now
+    //Some meas there is just one method the taker is allowed to send now
     //None means that the taker connection is open to doing a number of things
-    //listed in the NEWLY_CONNECTED_TAKER_... const
-    allowed_method: Option<&'static str>,
+    //listed in the Methods::for_new_taker() function return
+    allowed_message: Option<ExpectedMessage>,
     incoming_swapcoins: Option<Vec<WalletSwapCoin>>,
     outgoing_swapcoins: Option<Vec<WalletSwapCoin>>,
     pending_funding_txes: Option<Vec<Transaction>>,
@@ -110,7 +167,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
             let mut reader = BufReader::new(socket_reader);
 
             let mut connection_state = ConnectionState {
-                allowed_method: Some("takerhello"),
+                allowed_message: Some(ExpectedMessage::TakerHello),
                 incoming_swapcoins: None,
                 outgoing_swapcoins: None,
                 pending_funding_txes: None,
@@ -209,17 +266,17 @@ fn handle_message(
 
     let request_json: Value = match serde_json::from_str(&line) {
         Ok(r) => r,
-        Err(_e) => return Err(Error::Protocol("json parsing error")),
+        Err(_) => return Err(Error::Protocol("json parsing error")),
     };
     let method = match request_json["method"].as_str() {
-        Some(m) => m,
+        Some(m) => ExpectedMessage::try_from(m)?,
         None => return Err(Error::Protocol("missing method")),
     };
-    let is_method_allowed = match connection_state.allowed_method {
-        Some(allowed_method) => method == allowed_method,
-        None => NEWLY_CONNECTED_TAKER_ALLOWED_METHODS
+    let is_method_allowed = match connection_state.allowed_message {
+        Some(allowed_method) => allowed_method == method,
+        None => ExpectedMessage::for_new_taker()
             .iter()
-            .any(|&r| r == method),
+            .any(|method| method == method),
     };
     if !is_method_allowed {
         return Err(Error::Protocol("unexpected method"));
@@ -232,13 +289,13 @@ fn handle_message(
     println!("<== {:?}", request);
     let outgoing_message = match request {
         TakerToMakerMessage::TakerHello(_message) => {
-            connection_state.allowed_method = None;
+            connection_state.allowed_message = None;
             None
         }
         TakerToMakerMessage::GiveOffer(_message) => {
             let max_size = wallet.read().unwrap().get_offer_maxsize(rpc)?;
             let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
-            connection_state.allowed_method = Some("signsenderscontracttx");
+            connection_state.allowed_message = Some(ExpectedMessage::SignSendersContractTx);
             Some(MakerToTakerMessage::Offer(Offer {
                 absolute_fee: 1000,
                 amount_relative_fee: 0.005,
@@ -248,23 +305,24 @@ fn handle_message(
             }))
         }
         TakerToMakerMessage::SignSendersContractTx(message) => {
-            connection_state.allowed_method = Some("proofoffunding");
+            connection_state.allowed_message = Some(ExpectedMessage::ProofOfFunding);
             handle_sign_senders_contract_tx(wallet, message)?
         }
         TakerToMakerMessage::ProofOfFunding(proof) => {
-            connection_state.allowed_method = Some("sendersandreceiverscontractsigs");
+            connection_state.allowed_message =
+                Some(ExpectedMessage::SendersAndReceiversContractSigs);
             handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
         }
         TakerToMakerMessage::SendersAndReceiversContractSigs(message) => {
-            connection_state.allowed_method = Some("signreceiverscontracttx");
+            connection_state.allowed_message = Some(ExpectedMessage::SignReceiversContractTx);
             handle_senders_and_receivers_contract_sigs(connection_state, rpc, wallet, message)?
         }
         TakerToMakerMessage::SignReceiversContractTx(message) => {
-            connection_state.allowed_method = Some("hashpreimage");
+            connection_state.allowed_message = Some(ExpectedMessage::HashPreimage);
             handle_sign_receivers_contract_tx(wallet, message)?
         }
         TakerToMakerMessage::HashPreimage(message) => {
-            connection_state.allowed_method = Some("privatekeyhandover");
+            connection_state.allowed_message = Some(ExpectedMessage::PrivateKeyHandover);
             handle_hash_preimage(wallet, message)?
         }
         TakerToMakerMessage::PrivateKeyHandover(message) => {
