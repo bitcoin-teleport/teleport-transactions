@@ -55,9 +55,13 @@ use crate::error::Error;
 
 //TODO this goes in the config file
 pub const NETWORK: Network = Network::Regtest; //not configurable for now
-const INITIAL_ADDRESS_IMPORT_COUNT: usize = 5000;
 const DERIVATION_PATH: &str = "m/84'/1'/0'";
 const WALLET_FILE_VERSION: u32 = 0;
+
+#[cfg(not(test))]
+const INITIAL_ADDRESS_IMPORT_COUNT: usize = 5000;
+#[cfg(test)]
+const INITIAL_ADDRESS_IMPORT_COUNT: usize = 6;
 
 //TODO the wallet file format is probably best handled with sqlite
 
