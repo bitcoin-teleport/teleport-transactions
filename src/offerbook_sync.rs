@@ -31,7 +31,7 @@ async fn download_maker_offer(host: &str) -> Option<OfferAddress> {
     let mut socket = match TcpStream::connect(host).await {
         Ok(s) => s,
         Err(_e) => {
-            println!("failed to connect to: {}", host);
+            log::trace!(target: "offer_book", "failed to connect to: {}", host);
             return None;
         }
     };
@@ -54,7 +54,7 @@ async fn download_maker_offer(host: &str) -> Option<OfferAddress> {
     let mut line1 = String::new();
     match socket_reader.read_line(&mut line1).await {
         Ok(0) | Err(_) => {
-            println!("failed to read line");
+            log::trace!(target: "offer_book", "failed to read line");
             return None;
         }
         Ok(_n) => (),
@@ -62,15 +62,15 @@ async fn download_maker_offer(host: &str) -> Option<OfferAddress> {
     let _makerhello = if let MakerToTakerMessage::MakerHello(m) = parse_message(&line1)? {
         m
     } else {
-        println!("wrong protocol message");
+        log::trace!(target: "offer_book", "wrong protocol message");
         return None;
     };
-    println!("maker hello = {:?}", _makerhello);
+    log::trace!(target: "offer_book", "maker hello = {:?}", _makerhello);
 
     let mut line2 = String::new();
     match socket_reader.read_line(&mut line2).await {
         Ok(0) | Err(_) => {
-            println!("failed to read line2");
+            log::trace!(target: "oofer_book", "failed to read line2");
             return None;
         }
         Ok(_n) => (),
@@ -78,7 +78,7 @@ async fn download_maker_offer(host: &str) -> Option<OfferAddress> {
     let offer = if let MakerToTakerMessage::Offer(o) = parse_message(&line2)? {
         o
     } else {
-        println!("wrong protocol message2");
+        log::trace!(target: "offer_book", "wrong protocol message2");
         return None;
     };
 
