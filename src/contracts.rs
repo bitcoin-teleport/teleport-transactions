@@ -438,10 +438,6 @@ fn verify_contract_tx_sig(
     pubkey: &PublicKey,
     sig: &Signature,
 ) -> bool {
-    //TODO possible exploit here if this code accepts high-S signatures
-    //but bitcoin doesnt
-    //similar https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-26895
-
     let input_index = 0;
     let sighash = match Message::from_slice(
         &SigHashCache::new(contract_tx).signature_hash(
