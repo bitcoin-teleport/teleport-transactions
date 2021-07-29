@@ -10,18 +10,20 @@ use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
 use bitcoin::{Script, Transaction};
 
+use crate::error::Error;
+
 //TODO the structs here which are actual messages should have the word Message
 //added to their name e.g. SignSendersContractTx
 //to distinguish them from structs which just collect together
 //data e.g. SenderContractTxInfo
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct TakerHello {
     pub protocol_version_min: u32,
     pub protocol_version_max: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GiveOffer;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,7 +36,7 @@ pub struct SenderContractTxNoncesInfo {
     pub funding_input_value: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SignSendersContractTx {
     pub txes_info: Vec<SenderContractTxNoncesInfo>,
     pub hashvalue: [u8; 20],
@@ -57,14 +59,14 @@ pub struct NextCoinSwapTxInfo {
     pub next_hashlock_pubkey: PublicKey,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ProofOfFunding {
     pub confirmed_funding_txes: Vec<ConfirmedCoinSwapTxInfo>,
     pub next_coinswap_info: Vec<NextCoinSwapTxInfo>,
     pub next_locktime: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SendersAndReceiversContractSigs {
     pub receivers_sigs: Vec<Signature>,
     pub senders_sigs: Vec<Signature>,
@@ -76,12 +78,12 @@ pub struct ReceiversContractTxInfo {
     pub contract_tx: Transaction,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SignReceiversContractTx {
     pub txes: Vec<ReceiversContractTxInfo>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HashPreimage {
     pub senders_multisig_redeemscripts: Vec<Script>,
     pub receivers_multisig_redeemscripts: Vec<Script>,
@@ -94,7 +96,7 @@ pub struct SwapCoinPrivateKey {
     pub key: SecretKey,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PrivateKeyHandover {
     pub swapcoin_private_keys: Vec<SwapCoinPrivateKey>, //could easily be called private_keys not swapcoin_private_keys
 }
@@ -110,6 +112,30 @@ pub enum TakerToMakerMessage {
     SignReceiversContractTx(SignReceiversContractTx),
     HashPreimage(HashPreimage),
     PrivateKeyHandover(PrivateKeyHandover),
+}
+
+impl std::convert::TryFrom<&str> for TakerToMakerMessage {
+    type Error = Error;
+
+    fn try_from(m: &str) -> Result<Self, Self::Error> {
+        match m {
+            _ if m == "takerhello" => Ok(Self::TakerHello(Default::default())),
+            _ if m == "giveoffer" => Ok(Self::GiveOffer(Default::default())),
+            _ if m == "signsenderscontracttx" => {
+                Ok(Self::SignSendersContractTx(Default::default()))
+            }
+            _ if m == "proofoffunding" => Ok(Self::ProofOfFunding(Default::default())),
+            _ if m == "sendersandreceiverscontractsigs" => {
+                Ok(Self::SendersAndReceiversContractSigs(Default::default()))
+            }
+            _ if m == "signreceiverscontracttx" => {
+                Ok(Self::SignReceiversContractTx(Default::default()))
+            }
+            _ if m == "hashpreimage" => Ok(Self::HashPreimage(Default::default())),
+            _ if m == "privatekeyhandover" => Ok(Self::PrivateKeyHandover(Default::default())),
+            _ => Err(Error::Protocol("unsupported TakerToMakerMessage")),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

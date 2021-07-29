@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -31,19 +32,18 @@ use crate::messages::{
 };
 use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
 
-//TODO
-//this using of strings to indicate allowed methods doesnt fit aesthetically
-//with the using of structs and serde as in messages.rs
-//there is also no additional checking by the compiler
-//ideally this array and the other strings in this file would instead be
-//structs, however i havent had time to figure out if rust can do this
-pub const NEWLY_CONNECTED_TAKER_ALLOWED_METHODS: [&str; 5] = [
-    "giveoffer",
-    "signsenderscontracttx",
-    "proofoffunding",
-    "signreceiverscontracttx",
-    "hashpreimage",
-];
+pub fn newly_connected_taker_allowed_methods(method: &str) -> bool {
+    let m_res: Result<TakerToMakerMessage, Error> = method.try_into();
+
+    match m_res {
+        Ok(TakerToMakerMessage::GiveOffer(_))
+        | Ok(TakerToMakerMessage::SignSendersContractTx(_))
+        | Ok(TakerToMakerMessage::ProofOfFunding(_))
+        | Ok(TakerToMakerMessage::SignReceiversContractTx(_))
+        | Ok(TakerToMakerMessage::HashPreimage(_)) => true,
+        _ => false,
+    }
+}
 
 #[tokio::main]
 pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) {
@@ -217,9 +217,7 @@ fn handle_message(
     };
     let is_method_allowed = match connection_state.allowed_method {
         Some(allowed_method) => method == allowed_method,
-        None => NEWLY_CONNECTED_TAKER_ALLOWED_METHODS
-            .iter()
-            .any(|&r| r == method),
+        None => newly_connected_taker_allowed_methods(method),
     };
     if !is_method_allowed {
         return Err(Error::Protocol("unexpected method"));
