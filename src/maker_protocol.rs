@@ -12,6 +12,7 @@ use tokio::time::sleep;
 
 use serde_json::Value;
 
+use crate::bitcoin;
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::{OutPoint, PublicKey, Transaction, TxOut};

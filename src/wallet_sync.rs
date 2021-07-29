@@ -16,6 +16,7 @@ use itertools::izip;
 
 use bitcoin_wallet::mnemonic;
 
+use crate::bitcoin;
 use bitcoin::{
     blockdata::{
         opcodes::all,

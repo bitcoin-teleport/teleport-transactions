@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::array::TryFromSliceError;
 use std::convert::TryInto;
 
+use crate::bitcoin;
 use bitcoin::{
     blockdata::{
         opcodes,

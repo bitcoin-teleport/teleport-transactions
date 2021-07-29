@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::bitcoin;
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
 use bitcoin::{Script, Transaction};

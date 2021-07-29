@@ -1,4 +1,3 @@
-extern crate bitcoin;
 extern crate bitcoin_wallet;
 extern crate bitcoincore_rpc;
 
@@ -12,6 +11,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::util::key::PublicKey;
 use bitcoin::Amount;
 use bitcoin_wallet::mnemonic;
+use bitcoincore_rpc::bitcoin;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
 use structopt::StructOpt;
@@ -378,7 +378,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod test {
-    use bitcoin::util::amount::Amount;
+    use super::bitcoin::util::amount::Amount;
     use serde_json::Value;
     use std::{thread, time};
     use tokio::io::AsyncWriteExt;

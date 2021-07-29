@@ -8,6 +8,7 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::time::sleep;
 
+use crate::bitcoin;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
