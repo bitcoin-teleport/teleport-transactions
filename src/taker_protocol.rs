@@ -9,7 +9,7 @@ use tokio::prelude::*;
 use tokio::time::sleep;
 
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hash160::Hash as Hash160;
+use bitcoin::hashes::{hash160::Hash as Hash160, sha256::Hash as Hash256};
 use bitcoin::hashes::{hex::ToHex, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
@@ -40,7 +40,9 @@ use crate::messages::{
 use crate::get_bitcoin_rpc;
 
 use crate::offerbook_sync::{sync_offerbook, OfferAddress};
-use crate::wallet_sync::{generate_keypair, CoreAddressLabelType, Wallet, WalletSwapCoin};
+use crate::wallet_sync::{
+    generate_keypair, CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
+};
 
 #[tokio::main]
 pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
@@ -71,6 +73,7 @@ async fn send_coinswap(
     let mut preimage = [0u8; 32];
     OsRng.fill_bytes(&mut preimage);
     let hashvalue = Hash160::hash(&preimage);
+    let preimage = Hash256::from_inner(preimage);
 
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count;
 
@@ -112,7 +115,7 @@ async fn send_coinswap(
         .for_each(|(sig, outgoing_swapcoin)| outgoing_swapcoin.others_contract_sig = Some(*sig));
 
     for outgoing_swapcoin in &outgoing_swapcoins {
-        wallet.add_swapcoin(outgoing_swapcoin.clone());
+        wallet.add_outgoing_swapcoin(outgoing_swapcoin.clone());
     }
     wallet.update_swap_coins_list().unwrap();
 
@@ -132,7 +135,7 @@ async fn send_coinswap(
     let mut active_maker_addresses = Vec::<String>::new();
     let mut previous_maker: Option<OfferAddress> = None;
     let mut watchonly_swapcoins = Vec::<Vec<WatchOnlySwapCoin>>::new();
-    let mut incoming_swapcoins = Vec::<WalletSwapCoin>::new();
+    let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
 
     for maker_index in 0..maker_count {
         let maker = maker_offers_addresses.pop().unwrap();
@@ -289,7 +292,7 @@ async fn send_coinswap(
         incoming_swapcoin.others_contract_sig = Some(receiver_contract_sig);
     }
     for incoming_swapcoin in &incoming_swapcoins {
-        wallet.add_swapcoin(incoming_swapcoin.clone());
+        wallet.add_incoming_swapcoin(incoming_swapcoin.clone());
     }
     wallet.update_swap_coins_list().unwrap();
 
@@ -387,7 +390,7 @@ async fn send_coinswap(
     //update incoming_swapcoins with privkey on disk here
     for incoming_swapcoin in &incoming_swapcoins {
         wallet
-            .find_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
+            .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
             .unwrap()
             .other_privkey = incoming_swapcoin.other_privkey;
     }
@@ -825,7 +828,7 @@ async fn send_proof_of_funding_and_get_contract_txes(
 
 fn sign_receivers_contract_txes(
     receivers_contract_txes: &[Transaction],
-    outgoing_swapcoins: &[WalletSwapCoin],
+    outgoing_swapcoins: &[OutgoingSwapCoin],
 ) -> Result<Vec<Signature>, Error> {
     receivers_contract_txes
         .iter()
@@ -906,8 +909,8 @@ fn create_incoming_swapcoins(
     next_peer_hashlock_keys_or_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_multisig_keys_or_nonces: &[SecretKey],
-    preimage: [u8; 32],
-) -> Result<Vec<WalletSwapCoin>, Error> {
+    preimage: Hash256,
+) -> Result<Vec<IncomingSwapCoin>, Error> {
     let next_swap_multisig_redeemscripts = maker_sign_sender_and_receiver_contracts
         .senders_contract_txes_info
         .iter()
@@ -948,7 +951,7 @@ fn create_incoming_swapcoins(
     )
     .collect::<Vec<Transaction>>();
 
-    let mut incoming_swapcoins = Vec::<WalletSwapCoin>::new();
+    let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
     for (
         multisig_redeemscript,
         &maker_funded_multisig_pubkey,
@@ -978,7 +981,7 @@ fn create_incoming_swapcoins(
             o_ms_pubkey1
         };
 
-        let mut incoming_swapcoin = WalletSwapCoin::new(
+        let mut incoming_swapcoin = IncomingSwapCoin::new(
             maker_funded_multisig_privkey,
             maker_funded_other_multisig_pubkey,
             my_receivers_contract_tx.clone(),
@@ -1005,7 +1008,7 @@ async fn send_hash_preimage_and_get_private_keys(
     socket_writer: &mut WriteHalf<'_>,
     senders_multisig_redeemscripts: Vec<Script>,
     receivers_multisig_redeemscripts: Vec<Script>,
-    preimage: [u8; 32],
+    preimage: Hash256,
 ) -> Result<PrivateKeyHandover, Error> {
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
     send_message(

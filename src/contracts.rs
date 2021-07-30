@@ -23,7 +23,9 @@ use rand::RngCore;
 
 use crate::error::Error;
 use crate::messages::ConfirmedCoinSwapTxInfo;
-use crate::wallet_sync::{create_multisig_redeemscript, Wallet, WalletSwapCoin, NETWORK};
+use crate::wallet_sync::{
+    create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet, NETWORK,
+};
 
 //TODO should be configurable somehow
 //relatively low value for now so that its easier to test on regtest
@@ -49,6 +51,8 @@ pub trait SwapCoin {
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error>;
+    fn contract_type(&self) -> &str;
+    fn is_known(&self) -> bool;
 }
 
 pub fn calculate_maker_pubkey_from_nonce(
@@ -457,7 +461,7 @@ fn verify_contract_tx_sig(
     secp.verify(&sighash, sig, &pubkey.key).is_ok()
 }
 
-impl SwapCoin for WalletSwapCoin {
+impl SwapCoin for IncomingSwapCoin {
     fn get_multisig_redeemscript(&self) -> Script {
         let secp = Secp256k1::new();
         create_multisig_redeemscript(
@@ -501,34 +505,103 @@ impl SwapCoin for WalletSwapCoin {
         self.other_privkey = Some(privkey);
         Ok(())
     }
-}
 
-impl WalletSwapCoin {
-    //"_with_my_privkey" as opposed to with other_privkey
-    pub fn sign_contract_tx_with_my_privkey(
-        &self,
-        contract_tx: &Transaction,
-    ) -> Result<Signature, Error> {
-        let multisig_redeemscript = self.get_multisig_redeemscript();
-        Ok(sign_contract_tx(
-            contract_tx,
-            &multisig_redeemscript,
-            self.funding_amount,
-            &self.my_privkey,
-        )
-        .map_err(|_| Error::Protocol("error with signing contract tx"))?)
+    fn contract_type(&self) -> &str {
+        self.type_string()
     }
 
-    pub fn verify_contract_tx_sig(&self, sig: &Signature) -> bool {
-        verify_contract_tx_sig(
-            &self.contract_tx,
-            &self.get_multisig_redeemscript(),
-            self.funding_amount,
+    fn is_known(&self) -> bool {
+        self.contract_privkey_is_known()
+    }
+}
+
+impl SwapCoin for OutgoingSwapCoin {
+    fn get_multisig_redeemscript(&self) -> Script {
+        let secp = Secp256k1::new();
+        create_multisig_redeemscript(
             &self.other_pubkey,
-            sig,
+            &PublicKey {
+                compressed: true,
+                key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
+            },
         )
     }
+
+    fn get_contract_tx(&self) -> Transaction {
+        self.contract_tx.clone()
+    }
+
+    fn get_contract_redeemscript(&self) -> Script {
+        self.contract_redeemscript.clone()
+    }
+
+    fn get_funding_amount(&self) -> u64 {
+        self.funding_amount
+    }
+
+    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
+        self.verify_contract_tx_sig(sig)
+    }
+
+    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
+        self.verify_contract_tx_sig(sig)
+    }
+
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error> {
+        let secp = Secp256k1::new();
+        let pubkey = PublicKey {
+            compressed: true,
+            key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
+        };
+        if pubkey == self.other_pubkey {
+            Ok(())
+        } else {
+            Err(Error::Protocol("not correct privkey"))
+        }
+    }
+
+    fn contract_type(&self) -> &str {
+        self.type_string()
+    }
+
+    fn is_known(&self) -> bool {
+        self.contract_privkey_is_known()
+    }
 }
+
+macro_rules! sign_and_verify_contract {
+    ($coin:ident) => {
+        impl $coin {
+            //"_with_my_privkey" as opposed to with other_privkey
+            pub fn sign_contract_tx_with_my_privkey(
+                &self,
+                contract_tx: &Transaction,
+            ) -> Result<Signature, Error> {
+                let multisig_redeemscript = self.get_multisig_redeemscript();
+                Ok(sign_contract_tx(
+                    contract_tx,
+                    &multisig_redeemscript,
+                    self.funding_amount,
+                    &self.my_privkey,
+                )
+                .map_err(|_| Error::Protocol("error with signing contract tx"))?)
+            }
+
+            pub fn verify_contract_tx_sig(&self, sig: &Signature) -> bool {
+                verify_contract_tx_sig(
+                    &self.contract_tx,
+                    &self.get_multisig_redeemscript(),
+                    self.funding_amount,
+                    &self.other_pubkey,
+                    sig,
+                )
+            }
+        }
+    };
+}
+
+sign_and_verify_contract!(IncomingSwapCoin);
+sign_and_verify_contract!(OutgoingSwapCoin);
 
 impl SwapCoin for WatchOnlySwapCoin {
     fn get_multisig_redeemscript(&self) -> Script {
@@ -581,6 +654,14 @@ impl SwapCoin for WatchOnlySwapCoin {
         } else {
             Err(Error::Protocol("not correct privkey"))
         }
+    }
+
+    fn contract_type(&self) -> &str {
+        "watchonly"
+    }
+
+    fn is_known(&self) -> bool {
+        false
     }
 }
 

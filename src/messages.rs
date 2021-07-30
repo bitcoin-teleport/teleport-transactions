@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use bitcoin::hashes::hash160::Hash as Hash160;
+use bitcoin::hashes::{hash160::Hash as Hash160, sha256::Hash as Hash256};
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
 use bitcoin::{Script, Transaction};
@@ -86,7 +86,7 @@ pub struct SignReceiversContractTx {
 pub struct HashPreimage {
     pub senders_multisig_redeemscripts: Vec<Script>,
     pub receivers_multisig_redeemscripts: Vec<Script>,
-    pub preimage: [u8; 32],
+    pub preimage: Hash256,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

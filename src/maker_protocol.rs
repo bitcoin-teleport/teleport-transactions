@@ -27,7 +27,7 @@ use crate::messages::{
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
-use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
+use crate::wallet_sync::{CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
 
 // A structure denoting expectation of type of taker message.
 // Used in the [ConnectionState] structure.
@@ -56,8 +56,8 @@ pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u1
 
 struct ConnectionState {
     allowed_message: ExpectedMessage,
-    incoming_swapcoins: Option<Vec<WalletSwapCoin>>,
-    outgoing_swapcoins: Option<Vec<WalletSwapCoin>>,
+    incoming_swapcoins: Option<Vec<IncomingSwapCoin>>,
+    outgoing_swapcoins: Option<Vec<OutgoingSwapCoin>>,
     pending_funding_txes: Option<Vec<Transaction>>,
 }
 
@@ -399,7 +399,7 @@ fn handle_proof_of_funding(
 
     log::trace!(target: "maker", "proof of funding valid, creating own funding txes");
 
-    connection_state.incoming_swapcoins = Some(Vec::<WalletSwapCoin>::new());
+    connection_state.incoming_swapcoins = Some(Vec::<IncomingSwapCoin>::new());
     for (funding_info, &funding_output_index, &funding_output, &incoming_swapcoin_keys) in izip!(
         proof.confirmed_funding_txes.iter(),
         funding_output_indexes.iter(),
@@ -434,7 +434,7 @@ fn handle_proof_of_funding(
             .incoming_swapcoins
             .as_mut()
             .unwrap()
-            .push(WalletSwapCoin::new(
+            .push(IncomingSwapCoin::new(
                 coin_privkey,
                 coin_other_pubkey,
                 my_receivers_contract_tx.clone(),
@@ -553,10 +553,10 @@ fn handle_senders_and_receivers_contract_sigs(
     let mut w = wallet.write().unwrap();
     incoming_swapcoins
         .iter()
-        .for_each(|incoming_swapcoin| w.add_swapcoin(incoming_swapcoin.clone()));
+        .for_each(|incoming_swapcoin| w.add_incoming_swapcoin(incoming_swapcoin.clone()));
     outgoing_swapcoins
         .iter()
-        .for_each(|outgoing_swapcoin| w.add_swapcoin(outgoing_swapcoin.clone()));
+        .for_each(|outgoing_swapcoin| w.add_outgoing_swapcoin(outgoing_swapcoin.clone()));
     w.update_swap_coins_list()?;
 
     //TODO add coin to watchtowers
@@ -586,12 +586,20 @@ fn handle_sign_receivers_contract_tx(
     let mut sigs = Vec::<Signature>::new();
     for receivers_contract_tx_info in message.txes {
         sigs.push(
-            wallet
+            if let Some(c) = wallet
                 .read()
                 .unwrap()
-                .find_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
-                .ok_or(Error::Protocol("multisig_redeemscript not found"))?
-                .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?,
+                .find_incoming_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
+            {
+                c.sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?
+            } else {
+                wallet
+                    .read()
+                    .unwrap()
+                    .find_outgoing_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
+                    .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+                    .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?
+            },
         );
     }
     Ok(Some(MakerToTakerMessage::ReceiversContractSig(
@@ -608,7 +616,7 @@ fn handle_hash_preimage(
         let mut wallet_mref = wallet.write().unwrap();
         for multisig_redeemscript in message.senders_multisig_redeemscripts {
             let mut incoming_swapcoin = wallet_mref
-                .find_swapcoin_mut(&multisig_redeemscript)
+                .find_incoming_swapcoin_mut(&multisig_redeemscript)
                 .ok_or(Error::Protocol("senders multisig_redeemscript not found"))?;
             if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)
                 .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?
@@ -624,7 +632,7 @@ fn handle_hash_preimage(
     let mut swapcoin_private_keys = Vec::<SwapCoinPrivateKey>::new();
     for multisig_redeemscript in message.receivers_multisig_redeemscripts {
         let outgoing_swapcoin = wallet_ref
-            .find_swapcoin(&multisig_redeemscript)
+            .find_outgoing_swapcoin(&multisig_redeemscript)
             .ok_or(Error::Protocol("receivers multisig_redeemscript not found"))?;
         if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)
             .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?
@@ -652,10 +660,16 @@ fn handle_private_key_handover(
 ) -> Result<Option<MakerToTakerMessage>, Error> {
     let mut wallet_ref = wallet.write().unwrap();
     for swapcoin_private_key in message.swapcoin_private_keys {
-        wallet_ref
-            .find_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
-            .ok_or(Error::Protocol("multisig_redeemscript not found"))?
-            .apply_privkey(swapcoin_private_key.key)?
+        if let Some(c) =
+            wallet_ref.find_incoming_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
+        {
+            c.apply_privkey(swapcoin_private_key.key)?
+        } else {
+            wallet_ref
+                .find_outgoing_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
+                .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+                .apply_privkey(swapcoin_private_key.key)?
+        }
     }
     wallet_ref.update_swap_coins_list()?;
     println!("successfully completed coinswap");
