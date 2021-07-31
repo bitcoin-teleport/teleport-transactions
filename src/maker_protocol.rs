@@ -10,8 +10,6 @@ use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-use serde_json::Value;
-
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::{OutPoint, PublicKey, Transaction, TxOut};
@@ -31,19 +29,22 @@ use crate::messages::{
 };
 use crate::wallet_sync::{CoreAddressLabelType, Wallet, WalletSwapCoin};
 
-//TODO
-//this using of strings to indicate allowed methods doesnt fit aesthetically
-//with the using of structs and serde as in messages.rs
-//there is also no additional checking by the compiler
-//ideally this array and the other strings in this file would instead be
-//structs, however i havent had time to figure out if rust can do this
-pub const NEWLY_CONNECTED_TAKER_ALLOWED_METHODS: [&str; 5] = [
-    "giveoffer",
-    "signsenderscontracttx",
-    "proofoffunding",
-    "signreceiverscontracttx",
-    "hashpreimage",
-];
+// A structure denoting expectation of type of taker message.
+// Used in the [ConnectionState] structure.
+//
+// If the recieved message doesn't match expected method,
+// protocol error will be returned.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum ExpectedMessage {
+    TakerHello,
+    NewlyConnectedTaker,
+    SignSendersContractTx,
+    ProofOfFunding,
+    SendersAndReceiversContractSigs,
+    SignReceiversContractTx,
+    HashPreimage,
+    PrivateKeyHandover,
+}
 
 #[tokio::main]
 pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) {
@@ -54,10 +55,7 @@ pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u1
 }
 
 struct ConnectionState {
-    //Some means there is just one method the taker is allowed to send now
-    //None means that the taker connection is open to doing a number of things
-    //listed in the NEWLY_CONNECTED_TAKER_... const
-    allowed_method: Option<&'static str>,
+    allowed_message: ExpectedMessage,
     incoming_swapcoins: Option<Vec<WalletSwapCoin>>,
     outgoing_swapcoins: Option<Vec<WalletSwapCoin>>,
     pending_funding_txes: Option<Vec<Transaction>>,
@@ -110,7 +108,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
             let mut reader = BufReader::new(socket_reader);
 
             let mut connection_state = ConnectionState {
-                allowed_method: Some("takerhello"),
+                allowed_message: ExpectedMessage::TakerHello,
                 incoming_swapcoins: None,
                 outgoing_swapcoins: None,
                 pending_funding_txes: None,
@@ -205,72 +203,107 @@ fn handle_message(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
 ) -> Result<Option<MakerToTakerMessage>, Error> {
-    //println!("<== {}", line);
-
-    let request_json: Value = match serde_json::from_str(&line) {
-        Ok(r) => r,
-        Err(_e) => return Err(Error::Protocol("json parsing error")),
-    };
-    let method = match request_json["method"].as_str() {
-        Some(m) => m,
-        None => return Err(Error::Protocol("missing method")),
-    };
-    let is_method_allowed = match connection_state.allowed_method {
-        Some(allowed_method) => method == allowed_method,
-        None => NEWLY_CONNECTED_TAKER_ALLOWED_METHODS
-            .iter()
-            .any(|&r| r == method),
-    };
-    if !is_method_allowed {
-        return Err(Error::Protocol("unexpected method"));
-    }
-
     let request: TakerToMakerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
         Err(_e) => return Err(Error::Protocol("message parsing error")),
     };
     log::trace!(target: "maker", "<== {:?}", request);
-    let outgoing_message = match request {
-        TakerToMakerMessage::TakerHello(_message) => {
-            connection_state.allowed_method = None;
-            None
+
+    let outgoing_message = match connection_state.allowed_message {
+        ExpectedMessage::TakerHello => {
+            if let TakerToMakerMessage::TakerHello(_) = request {
+                connection_state.allowed_message = ExpectedMessage::NewlyConnectedTaker;
+                None
+            } else {
+                return Err(Error::Protocol("Expected Taker Hello Message"));
+            }
         }
-        TakerToMakerMessage::GiveOffer(_message) => {
-            let max_size = wallet.read().unwrap().get_offer_maxsize(rpc)?;
-            let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
-            connection_state.allowed_method = Some("signsenderscontracttx");
-            Some(MakerToTakerMessage::Offer(Offer {
-                absolute_fee: 1000,
-                amount_relative_fee: 0.005,
-                max_size,
-                min_size: 10000,
-                tweakable_point,
-            }))
+        ExpectedMessage::NewlyConnectedTaker => match request {
+            TakerToMakerMessage::GiveOffer(_) => {
+                let max_size = wallet.read().unwrap().get_offer_maxsize(rpc)?;
+                let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
+                connection_state.allowed_message = ExpectedMessage::SignSendersContractTx;
+                Some(MakerToTakerMessage::Offer(Offer {
+                    absolute_fee: 1000,
+                    amount_relative_fee: 0.005,
+                    max_size,
+                    min_size: 10000,
+                    tweakable_point,
+                }))
+            }
+            TakerToMakerMessage::SignSendersContractTx(message) => {
+                connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
+                handle_sign_senders_contract_tx(wallet, message)?
+            }
+            TakerToMakerMessage::ProofOfFunding(proof) => {
+                connection_state.allowed_message = ExpectedMessage::SendersAndReceiversContractSigs;
+                handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
+            }
+            TakerToMakerMessage::SignReceiversContractTx(message) => {
+                connection_state.allowed_message = ExpectedMessage::HashPreimage;
+                handle_sign_receivers_contract_tx(wallet, message)?
+            }
+            TakerToMakerMessage::HashPreimage(message) => {
+                connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
+                handle_hash_preimage(wallet, message)?
+            }
+            _ => {
+                return Err(Error::Protocol("Unexpected Newly Connected Taker message"));
+            }
+        },
+        ExpectedMessage::SignSendersContractTx => {
+            if let TakerToMakerMessage::SignSendersContractTx(message) = request {
+                connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
+                handle_sign_senders_contract_tx(wallet, message)?
+            } else {
+                return Err(Error::Protocol(
+                    "Expected Sign sender's contract transaction message",
+                ));
+            }
         }
-        TakerToMakerMessage::SignSendersContractTx(message) => {
-            connection_state.allowed_method = Some("proofoffunding");
-            handle_sign_senders_contract_tx(wallet, message)?
+        ExpectedMessage::ProofOfFunding => {
+            if let TakerToMakerMessage::ProofOfFunding(proof) = request {
+                connection_state.allowed_message = ExpectedMessage::SendersAndReceiversContractSigs;
+                handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
+            } else {
+                return Err(Error::Protocol("Expected proof of funding message"));
+            }
         }
-        TakerToMakerMessage::ProofOfFunding(proof) => {
-            connection_state.allowed_method = Some("sendersandreceiverscontractsigs");
-            handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
+        ExpectedMessage::SendersAndReceiversContractSigs => {
+            if let TakerToMakerMessage::SendersAndReceiversContractSigs(message) = request {
+                connection_state.allowed_message = ExpectedMessage::SignReceiversContractTx;
+                handle_senders_and_receivers_contract_sigs(connection_state, rpc, wallet, message)?
+            } else {
+                return Err(Error::Protocol(
+                    "Expected sender's and reciever's contract signatures",
+                ));
+            }
         }
-        TakerToMakerMessage::SendersAndReceiversContractSigs(message) => {
-            connection_state.allowed_method = Some("signreceiverscontracttx");
-            handle_senders_and_receivers_contract_sigs(connection_state, rpc, wallet, message)?
+        ExpectedMessage::SignReceiversContractTx => {
+            if let TakerToMakerMessage::SignReceiversContractTx(message) = request {
+                connection_state.allowed_message = ExpectedMessage::HashPreimage;
+                handle_sign_receivers_contract_tx(wallet, message)?
+            } else {
+                return Err(Error::Protocol("Expected reciever's contract transaction"));
+            }
         }
-        TakerToMakerMessage::SignReceiversContractTx(message) => {
-            connection_state.allowed_method = Some("hashpreimage");
-            handle_sign_receivers_contract_tx(wallet, message)?
+        ExpectedMessage::HashPreimage => {
+            if let TakerToMakerMessage::HashPreimage(message) = request {
+                connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
+                handle_hash_preimage(wallet, message)?
+            } else {
+                return Err(Error::Protocol("Expected hash preimgae"));
+            }
         }
-        TakerToMakerMessage::HashPreimage(message) => {
-            connection_state.allowed_method = Some("privatekeyhandover");
-            handle_hash_preimage(wallet, message)?
-        }
-        TakerToMakerMessage::PrivateKeyHandover(message) => {
-            handle_private_key_handover(wallet, message)?
+        ExpectedMessage::PrivateKeyHandover => {
+            if let TakerToMakerMessage::PrivateKeyHandover(message) = request {
+                handle_private_key_handover(wallet, message)?
+            } else {
+                return Err(Error::Protocol("expected privatekey handover"));
+            }
         }
     };
+
     log::trace!(target: "maker", "==> {:?}", outgoing_message);
     match outgoing_message {
         Some(result) => Ok(Some(result)),
