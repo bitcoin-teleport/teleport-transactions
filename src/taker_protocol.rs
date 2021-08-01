@@ -48,13 +48,13 @@ use crate::wallet_sync::{
 pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
     match run(rpc, wallet).await {
         Ok(_o) => (),
-        Err(e) => log::trace!(target: "taker", "err {:?}", e),
+        Err(e) => log::trace!("err {:?}", e),
     };
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet) -> Result<(), Error> {
     let mut offers_addresses = sync_offerbook().await;
-    log::trace!(target: "taker", "offers_addresses = {:?}", offers_addresses);
+    log::trace!("offers_addresses = {:?}", offers_addresses);
 
     send_coinswap(rpc, wallet, &mut offers_addresses).await?;
     Ok(())
@@ -79,7 +79,7 @@ async fn send_coinswap(
 
     let first_maker = maker_offers_addresses.last().unwrap();
     let last_maker = maker_offers_addresses.first().unwrap().clone();
-    log::trace!(target: "taker", "coinswapping to first maker1 = {}", first_maker.address);
+    log::trace!("coinswapping to first maker1 = {}", first_maker.address);
 
     let (
         first_maker_multisig_pubkeys,
@@ -139,7 +139,7 @@ async fn send_coinswap(
 
     for maker_index in 0..maker_count {
         let maker = maker_offers_addresses.pop().unwrap();
-        log::trace!(target: "taker", "coinswapping to maker = {:?}", maker.address);
+        log::trace!("coinswapping to maker = {:?}", maker.address);
         let maker_refund_locktime =
             REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
         let is_taker_next_peer = maker_index == maker_count - 1;
@@ -396,7 +396,7 @@ async fn send_coinswap(
     }
     wallet.update_swap_coins_list().unwrap();
 
-    println!("successfully completed coinswap");
+    log::trace!("successfully completed coinswap");
     Ok(())
 }
 
@@ -404,7 +404,7 @@ async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: TakerToMakerMessage,
 ) -> Result<(), Error> {
-    println!("=> {:?}", message);
+    log::trace!("=> {:?}", message);
     let mut result_bytes = serde_json::to_vec(&message).map_err(|e| io::Error::from(e))?;
     result_bytes.push(b'\n');
     socket_writer.write_all(&result_bytes).await?;
@@ -426,14 +426,14 @@ async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTak
         Err(_e) => return Err(Error::Protocol("json parsing error")),
     };
 
-    log::trace!(target: "taker", "<= {:?}", message);
+    log::trace!("<= {:?}", message);
     Ok(message)
 }
 
 async fn handshake_maker(
     socket: &mut TcpStream,
 ) -> Result<(BufReader<ReadHalf<'_>>, WriteHalf<'_>), Error> {
-    println!("connected to maker");
+    log::trace!("connected to maker");
 
     let (reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(reader);
@@ -513,7 +513,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     hashvalue: Hash160,
     locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
-    println!(
+    log::trace!(
         "requesting senders contract tx sig from maker = {}",
         maker_address
     );
@@ -578,7 +578,7 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
 ) -> Result<Vec<Signature>, Error> {
-    println!(
+    log::trace!(
         "requesting receivers contract tx sig from maker = {}",
         maker_address
     );
@@ -625,7 +625,7 @@ async fn wait_for_funding_tx_confirmation(
     rpc: &Client,
     funding_txids: &[Txid],
 ) -> Result<(Vec<Transaction>, Vec<String>), Error> {
-    println!(
+    log::trace!(
         "waiting for funding transaction to confirm, txids={:?}",
         funding_txids
     );
@@ -645,7 +645,7 @@ async fn wait_for_funding_tx_confirmation(
             if gettx.info.confirmations >= 1 {
                 txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
                 txid_blockhash_map.insert(*txid, gettx.info.blockhash.unwrap());
-                log::trace!(target: "taker", "funding tx {} reached 1 confirmation(s)", txid);
+                log::trace!("funding tx {} reached 1 confirmation(s)", txid);
             }
         }
         if txid_tx_map.len() == funding_txids.len() {
@@ -655,7 +655,7 @@ async fn wait_for_funding_tx_confirmation(
         #[cfg(test)]
         crate::test::generate_1_block(&get_bitcoin_rpc().unwrap());
     }
-    log::trace!(target: "taker", "funding transactions confirmed");
+    log::trace!("funding transactions confirmed");
 
     let txes = funding_txids
         .iter()

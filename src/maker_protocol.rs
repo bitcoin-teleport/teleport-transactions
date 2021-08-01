@@ -49,8 +49,8 @@ enum ExpectedMessage {
 #[tokio::main]
 pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) {
     match run(rpc, wallet, port).await {
-        Ok(_o) => println!("maker ended without error"),
-        Err(e) => println!("maker ended with err {:?}", e),
+        Ok(_o) => log::trace!("maker ended without error"),
+        Err(e) => log::trace!("maker ended with err {:?}", e),
     };
 }
 
@@ -64,7 +64,7 @@ struct ConnectionState {
 async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result<(), Error> {
     //TODO port number in config file
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
-    log::trace!(target: "maker", "listening on port {}", port);
+    log::trace!("listening on port {}", port);
 
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
@@ -75,12 +75,12 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
                     Error::Rpc(_e) => {
-                        println!("lost connection with bitcoin node, temporarily shutting \
+                        log::trace!("lost connection with bitcoin node, temporarily shutting \
                                   down server until connection reestablished");
                         accepting_clients = false;
                         continue;
                     },
-                    _ => println!("ending server"),
+                    _ => log::trace!("ending server"),
                 }
                 break Err(client_err.unwrap());
             },
@@ -88,17 +88,17 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
             _ = sleep(Duration::from_secs(60)) => {
                 let r = rpc.get_best_block_hash();
                 accepting_clients = r.is_ok();
-                println!("timeout branch, accepting clients={}", accepting_clients);
+                log::trace!("timeout branch, accepting clients={}", accepting_clients);
                 continue;
             },
         };
 
         if !accepting_clients {
-            println!("rejecting connection from {:?}", addr);
+            log::trace!("rejecting connection from {:?}", addr);
             continue;
         }
 
-        println!("accepted connection from {:?}", addr);
+        log::trace!("accepted connection from {:?}", addr);
         let client_rpc = Arc::clone(&rpc);
         let client_wallet = Arc::clone(&wallet);
         let server_loop_comms_tx = server_loop_comms_tx.clone();
@@ -123,7 +123,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
             )
             .await
             {
-                println!("io error sending first message: {:?}", e);
+                log::trace!("io error sending first message: {:?}", e);
                 return;
             }
 
@@ -131,12 +131,12 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(n) if n == 0 => {
-                        log::trace!(target: "maker", "reached EOF");
+                        log::trace!("reached EOF");
                         break;
                     }
                     Ok(_n) => (),
                     Err(e) => {
-                        println!("error reading from socket: {:?}", e);
+                        log::trace!("error reading from socket: {:?}", e);
                         break;
                     }
                 };
@@ -146,7 +146,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                         .send(Error::Protocol("kill signal"))
                         .await
                         .unwrap();
-                    println!("Kill signal received, stopping maker....");
+                    log::trace!("Kill signal received, stopping maker....");
                     break;
                 }
 
@@ -161,14 +161,14 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                     Ok(reply) => {
                         if let Some(message) = reply {
                             if let Err(e) = send_message(&mut socket_writer, &message).await {
-                                println!("closing due to io error sending message: {:?}", e);
+                                log::trace!("closing due to io error sending message: {:?}", e);
                                 break;
                             }
                         }
                         //if reply is None then dont send anything to client
                     }
                     Err(err) => {
-                        println!("error handling client request: {:?}", err);
+                        log::trace!("error handling client request: {:?}", err);
                         match err {
                             Error::Network(_e) => (),
                             Error::Protocol(_e) => (),
@@ -425,7 +425,7 @@ fn handle_proof_of_funding(
             &funding_info.contract_redeemscript,
         );
         let (coin_privkey, coin_other_pubkey, hashlock_privkey) = incoming_swapcoin_keys;
-        println!(
+        log::trace!(
             "adding incoming_swapcoin contract_tx = {:?} fo = {:?}",
             my_receivers_contract_tx.clone(),
             funding_output
@@ -672,6 +672,6 @@ fn handle_private_key_handover(
         }
     }
     wallet_ref.update_swap_coins_list()?;
-    println!("successfully completed coinswap");
+    log::trace!("successfully completed coinswap");
     Ok(None)
 }

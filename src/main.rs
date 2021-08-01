@@ -6,6 +6,7 @@ use dirs::home_dir;
 use std::io;
 use std::iter::repeat;
 use std::path::PathBuf;
+use std::sync::Once;
 use std::sync::{Arc, RwLock};
 
 use bitcoin::hashes::hex::ToHex;
@@ -340,7 +341,21 @@ enum Subcommand {
     CoinswapSend,
 }
 
+static INIT: Once = Once::new();
+
+/// Setup function that will only run once, even if called multiple times.
+fn setup_logger() {
+    INIT.call_once(|| {
+        env_logger::builder()
+            .is_test(true)
+            .filter_module("teleport", log::LevelFilter::Trace)
+            .init();
+    });
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    setup_logger();
+
     let args = ArgsWithWalletFile::from_args();
 
     match args.subcommand {
@@ -429,6 +444,8 @@ mod test {
     // wallet name `teleport` loaded and have enough balance to execute transactions.
     #[tokio::test]
     async fn test_standard_coin_swap() {
+        setup_logger();
+
         let rpc = get_bitcoin_rpc().unwrap();
 
         // unlock all utxos to avoid "insufficient fund" error
