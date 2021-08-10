@@ -603,7 +603,7 @@ fn handle_hash_preimage(
     wallet: Arc<RwLock<Wallet>>,
     message: HashPreimage,
 ) -> Result<Option<MakerToTakerMessage>, Error> {
-    let hashvalue = Hash160::hash(&message.preimage).into_inner();
+    let hashvalue = Hash160::hash(&message.preimage);
     {
         let mut wallet_mref = wallet.write().unwrap();
         for multisig_redeemscript in message.senders_multisig_redeemscripts {

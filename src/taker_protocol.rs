@@ -70,7 +70,7 @@ async fn send_coinswap(
 
     let mut preimage = [0u8; 32];
     OsRng.fill_bytes(&mut preimage);
-    let hashvalue = Hash160::hash(&preimage).into_inner();
+    let hashvalue = Hash160::hash(&preimage);
 
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count;
 
@@ -507,7 +507,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     timelock_pubkeys: &[PublicKey],
-    hashvalue: [u8; 20],
+    hashvalue: Hash160,
     locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
     println!(
@@ -713,7 +713,7 @@ async fn send_proof_of_funding_and_get_contract_txes(
     next_peer_hashlock_pubkeys: &[PublicKey],
     maker_refund_locktime: u16,
     this_maker_contract_txes: &[Transaction],
-    hashvalue: [u8; 20],
+    hashvalue: Hash160,
 ) -> Result<(SignSendersAndReceiversContractTxes, Vec<Script>), Error> {
     send_message(
         socket_writer,

@@ -8,6 +8,7 @@ use bitcoin::{
         opcodes,
         script::{Builder, Instruction, Script},
     },
+    hashes::{hash160::Hash as Hash160, Hash},
     secp256k1,
     secp256k1::{Message, Secp256k1, SecretKey, Signature},
     util::bip143::SigHashCache,
@@ -78,7 +79,7 @@ pub fn derive_maker_pubkey_and_nonce(
 pub fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
     pub_timelock: &PublicKey,
-    hashvalue: [u8; 20],
+    hashvalue: Hash160,
     locktime: u16,
 ) -> Script {
     Builder::new()
@@ -105,8 +106,10 @@ pub fn create_contract_redeemscript(
 }
 
 //TODO put all these magic numbers in a const or something
-pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<[u8; 20], TryFromSliceError> {
-    redeemscript.to_bytes()[4..24].try_into()
+pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, TryFromSliceError> {
+    Ok(Hash160::from_inner(
+        redeemscript.to_bytes()[4..24].try_into()?,
+    ))
 }
 
 pub fn read_locktime_from_contract(redeemscript: &Script) -> Option<u16> {
@@ -186,7 +189,7 @@ fn is_contract_out_valid(
     contract_output: &TxOut,
     hashlock_pubkey: &PublicKey,
     timelock_pubkey: &PublicKey,
-    hashvalue: [u8; 20],
+    hashvalue: Hash160,
     locktime: u16,
 ) -> Result<(), Error> {
     let minimum_locktime = 2; //TODO should be in config file or something
@@ -215,7 +218,7 @@ pub fn validate_and_sign_senders_contract_tx(
     senders_contract_tx: &Transaction,
     multisig_redeemscript: &Script,
     funding_input_value: u64,
-    hashvalue: [u8; 20],
+    hashvalue: Hash160,
     locktime: u16,
     tweakable_privkey: &SecretKey,
     wallet: &mut Wallet,
@@ -667,7 +670,7 @@ mod test {
     #[test]
     fn test_contract_script_generation() {
         // create a random hashvalue
-        let hashvalue = thread_rng().gen::<[u8; 20]>();
+        let hashvalue = Hash160::from_inner(thread_rng().gen::<[u8; 20]>());
 
         let pub_hashlock = PublicKey::from_str(
             "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
@@ -691,7 +694,7 @@ mod test {
 
         // Below is hand made script string that should be expected
         let expected = "827ca914".to_owned()
-            + &hashvalue.to_hex()[..]
+            + &hashvalue.as_inner().to_hex()[..]
             + "876321"
             + &pub_hashlock.to_string()[..]
             + "0120516721"
