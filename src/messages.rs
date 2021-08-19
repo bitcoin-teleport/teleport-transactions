@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
 use bitcoin::{Script, Transaction};
@@ -37,7 +38,7 @@ pub struct SenderContractTxNoncesInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SignSendersContractTx {
     pub txes_info: Vec<SenderContractTxNoncesInfo>,
-    pub hashvalue: [u8; 20],
+    pub hashvalue: Hash160,
     pub locktime: u16,
 }
 

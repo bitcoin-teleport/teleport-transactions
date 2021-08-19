@@ -21,7 +21,10 @@ use bitcoin::{
         opcodes::all,
         script::{Builder, Script},
     },
-    hashes::hex::{FromHex, ToHex},
+    hashes::{
+        hash160::Hash as Hash160,
+        hex::{FromHex, ToHex},
+    },
     secp256k1,
     secp256k1::{Secp256k1, SecretKey, Signature},
     util::{
@@ -604,7 +607,7 @@ impl Wallet {
     pub fn find_incomplete_coinswaps(
         &self,
         rpc: &Client,
-    ) -> Result<HashMap<[u8; 20], Vec<(ListUnspentResultEntry, &WalletSwapCoin)>>, Error> {
+    ) -> Result<HashMap<Hash160, Vec<(ListUnspentResultEntry, &WalletSwapCoin)>>, Error> {
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
 
@@ -613,11 +616,11 @@ impl Wallet {
             .values()
             .filter(|sc| sc.other_privkey.is_some())
             .map(|sc| read_hashvalue_from_contract(&sc.contract_redeemscript).unwrap())
-            .collect::<HashSet<[u8; 20]>>();
+            .collect::<HashSet<Hash160>>();
         //TODO make this read_hashvalue_from_contract() a struct function of WalletCoinSwap
 
         let mut incomplete_swapcoin_groups =
-            HashMap::<[u8; 20], Vec<(ListUnspentResultEntry, &WalletSwapCoin)>>::new();
+            HashMap::<Hash160, Vec<(ListUnspentResultEntry, &WalletSwapCoin)>>::new();
         for utxo in rpc.list_unspent(None, None, None, None, None)? {
             if utxo.descriptor.is_none() {
                 continue;
@@ -1054,7 +1057,7 @@ impl Wallet {
         total_coinswap_amount: u64,
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
-        hashvalue: [u8; 20],
+        hashvalue: Hash160,
         locktime: u16, //returns: funding_txes, swapcoins, timelock_pubkeys
     ) -> Result<(Vec<Transaction>, Vec<WalletSwapCoin>, Vec<PublicKey>), Error> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
