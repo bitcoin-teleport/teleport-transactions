@@ -153,63 +153,6 @@ impl IncomingSwapCoin {
             hash_preimage: None,
         }
     }
-}
-
-impl OutgoingSwapCoin {
-    pub fn new(
-        my_privkey: SecretKey,
-        other_pubkey: PublicKey,
-        contract_tx: Transaction,
-        contract_redeemscript: Script,
-        timelock_privkey: SecretKey,
-        funding_amount: u64,
-    ) -> Self {
-        let secp = Secp256k1::new();
-        let timelock_pubkey = PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &timelock_privkey),
-        };
-        assert!(
-            timelock_pubkey
-                == contracts::read_timelock_pubkey_from_contract(&contract_redeemscript).unwrap()
-        );
-        Self {
-            my_privkey,
-            other_pubkey,
-            contract_tx,
-            contract_redeemscript,
-            timelock_privkey,
-            funding_amount,
-            others_contract_sig: None,
-            hash_preimage: None,
-        }
-    }
-}
-
-pub trait WalletSwapCoin {
-    fn get_my_pubkey(&self) -> PublicKey;
-    fn get_other_pubkey(&self) -> &PublicKey;
-    fn sign_transaction_input(
-        &self,
-        index: usize,
-        tx: &Transaction,
-        input: &mut TxIn,
-        redeemscript: &Script,
-    ) -> Result<(), &'static str>;
-}
-
-impl WalletSwapCoin for IncomingSwapCoin {
-    fn get_my_pubkey(&self) -> PublicKey {
-        let secp = Secp256k1::new();
-        PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
-        }
-    }
-
-    fn get_other_pubkey(&self) -> &PublicKey {
-        &self.other_pubkey
-    }
 
     fn sign_transaction_input(
         &self,
@@ -254,7 +197,43 @@ impl WalletSwapCoin for IncomingSwapCoin {
     }
 }
 
-impl WalletSwapCoin for OutgoingSwapCoin {
+impl OutgoingSwapCoin {
+    pub fn new(
+        my_privkey: SecretKey,
+        other_pubkey: PublicKey,
+        contract_tx: Transaction,
+        contract_redeemscript: Script,
+        timelock_privkey: SecretKey,
+        funding_amount: u64,
+    ) -> Self {
+        let secp = Secp256k1::new();
+        let timelock_pubkey = PublicKey {
+            compressed: true,
+            key: secp256k1::PublicKey::from_secret_key(&secp, &timelock_privkey),
+        };
+        assert!(
+            timelock_pubkey
+                == contracts::read_timelock_pubkey_from_contract(&contract_redeemscript).unwrap()
+        );
+        Self {
+            my_privkey,
+            other_pubkey,
+            contract_tx,
+            contract_redeemscript,
+            timelock_privkey,
+            funding_amount,
+            others_contract_sig: None,
+            hash_preimage: None,
+        }
+    }
+}
+
+pub trait WalletSwapCoin {
+    fn get_my_pubkey(&self) -> PublicKey;
+    fn get_other_pubkey(&self) -> &PublicKey;
+}
+
+impl WalletSwapCoin for IncomingSwapCoin {
     fn get_my_pubkey(&self) -> PublicKey {
         let secp = Secp256k1::new();
         PublicKey {
@@ -266,33 +245,19 @@ impl WalletSwapCoin for OutgoingSwapCoin {
     fn get_other_pubkey(&self) -> &PublicKey {
         &self.other_pubkey
     }
+}
 
-    fn sign_transaction_input(
-        &self,
-        index: usize,
-        tx: &Transaction,
-        input: &mut TxIn,
-        redeemscript: &Script,
-    ) -> Result<(), &'static str> {
+impl WalletSwapCoin for OutgoingSwapCoin {
+    fn get_my_pubkey(&self) -> PublicKey {
         let secp = Secp256k1::new();
+        PublicKey {
+            compressed: true,
+            key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
+        }
+    }
 
-        let sighash = secp256k1::Message::from_slice(
-            &SigHashCache::new(tx).signature_hash(
-                index,
-                redeemscript,
-                self.funding_amount,
-                SigHashType::All,
-            )[..],
-        )
-        .unwrap();
-
-        let sig = secp.sign(&sighash, &self.my_privkey);
-
-        input.witness.push(Vec::new()); //first is multisig dummy
-        input.witness.push(sig.serialize_der().to_vec());
-        input.witness[1].push(SigHashType::All as u8);
-        input.witness.push(redeemscript.to_bytes());
-        Ok(())
+    fn get_other_pubkey(&self) -> &PublicKey {
+        &self.other_pubkey
     }
 }
 
@@ -952,7 +917,7 @@ impl Wallet {
                 )
                 .into_script();
 
-                self.find_outgoing_swapcoin(&redeemscript)
+                self.find_incoming_swapcoin(&redeemscript)
                     .unwrap()
                     .sign_transaction_input(ix, &tx_clone, &mut input, &redeemscript)
                     .unwrap();
