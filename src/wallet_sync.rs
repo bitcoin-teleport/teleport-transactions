@@ -154,10 +154,6 @@ impl IncomingSwapCoin {
         }
     }
 
-    pub fn type_string(&self) -> &str {
-        "hashlock"
-    }
-
     pub fn contract_privkey_is_known(&self) -> bool {
         self.other_privkey.is_some() || self.hash_preimage.is_some()
     }
@@ -191,10 +187,6 @@ impl OutgoingSwapCoin {
             others_contract_sig: None,
             hash_preimage: None,
         }
-    }
-
-    pub fn type_string(&self) -> &str {
-        "timelock"
     }
 
     pub fn contract_privkey_is_known(&self) -> bool {

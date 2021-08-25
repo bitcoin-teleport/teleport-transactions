@@ -4,6 +4,7 @@ extern crate bitcoincore_rpc;
 
 use dirs::home_dir;
 use std::io;
+use std::iter::repeat;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -186,13 +187,16 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
                 "{:16} {:8} {:8} {:<15} {:<7} value",
                 "outpoint", "type", "preimage", "locktime/blocks", "conf",
             );
-            for (utxo, swapcoin) in utxo_incoming_swapcoins
+
+            for ((utxo, swapcoin), contract_type) in utxo_incoming_swapcoins
                 .iter()
                 .map(|(l, i)| (l, (*i as &dyn SwapCoin)))
+                .zip(repeat("hashlock"))
                 .chain(
                     utxo_outgoing_swapcoins
                         .iter()
-                        .map(|(l, o)| (l, (*o as &dyn SwapCoin))),
+                        .map(|(l, o)| (l, (*o as &dyn SwapCoin)))
+                        .zip(repeat("timelock")),
                 )
             {
                 let txid = utxo.txid.to_hex();
@@ -203,7 +207,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
                     if long_form { "" } else { ".." },
                     if long_form { &"" } else { &txid[58..64] },
                     utxo.vout,
-                    swapcoin.contract_type(),
+                    contract_type,
                     if swapcoin.is_known() { "known" } else { "unknown" },
                     read_locktime_from_contract(&swapcoin.get_contract_redeemscript())
                         .expect("unable to read locktime from contract"),

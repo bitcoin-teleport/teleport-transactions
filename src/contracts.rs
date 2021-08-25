@@ -51,7 +51,6 @@ pub trait SwapCoin {
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error>;
-    fn contract_type(&self) -> &str;
     fn is_known(&self) -> bool;
 }
 
@@ -506,10 +505,6 @@ impl SwapCoin for IncomingSwapCoin {
         Ok(())
     }
 
-    fn contract_type(&self) -> &str {
-        self.type_string()
-    }
-
     fn is_known(&self) -> bool {
         self.contract_privkey_is_known()
     }
@@ -558,10 +553,6 @@ impl SwapCoin for OutgoingSwapCoin {
         } else {
             Err(Error::Protocol("not correct privkey"))
         }
-    }
-
-    fn contract_type(&self) -> &str {
-        self.type_string()
     }
 
     fn is_known(&self) -> bool {
@@ -654,10 +645,6 @@ impl SwapCoin for WatchOnlySwapCoin {
         } else {
             Err(Error::Protocol("not correct privkey"))
         }
-    }
-
-    fn contract_type(&self) -> &str {
-        "watchonly"
     }
 
     fn is_known(&self) -> bool {
