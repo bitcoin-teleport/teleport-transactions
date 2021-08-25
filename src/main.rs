@@ -208,7 +208,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
                     if long_form { &"" } else { &txid[58..64] },
                     utxo.vout,
                     contract_type,
-                    if swapcoin.is_known() { "known" } else { "unknown" },
+                    if swapcoin.is_hash_preimage_known() { "known" } else { "unknown" },
                     read_locktime_from_contract(&swapcoin.get_contract_redeemscript())
                         .expect("unable to read locktime from contract"),
                     utxo.confirmations,

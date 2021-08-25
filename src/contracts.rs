@@ -51,7 +51,7 @@ pub trait SwapCoin {
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error>;
-    fn is_known(&self) -> bool;
+    fn is_hash_preimage_known(&self) -> bool;
 }
 
 pub fn calculate_maker_pubkey_from_nonce(
@@ -505,8 +505,8 @@ impl SwapCoin for IncomingSwapCoin {
         Ok(())
     }
 
-    fn is_known(&self) -> bool {
-        self.contract_privkey_is_known()
+    fn is_hash_preimage_known(&self) -> bool {
+        self.hash_preimage.is_some()
     }
 }
 
@@ -555,8 +555,8 @@ impl SwapCoin for OutgoingSwapCoin {
         }
     }
 
-    fn is_known(&self) -> bool {
-        self.contract_privkey_is_known()
+    fn is_hash_preimage_known(&self) -> bool {
+        self.hash_preimage.is_some()
     }
 }
 
@@ -647,7 +647,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         }
     }
 
-    fn is_known(&self) -> bool {
+    fn is_hash_preimage_known(&self) -> bool {
         false
     }
 }

@@ -153,10 +153,6 @@ impl IncomingSwapCoin {
             hash_preimage: None,
         }
     }
-
-    pub fn contract_privkey_is_known(&self) -> bool {
-        self.other_privkey.is_some() || self.hash_preimage.is_some()
-    }
 }
 
 impl OutgoingSwapCoin {
@@ -187,10 +183,6 @@ impl OutgoingSwapCoin {
             others_contract_sig: None,
             hash_preimage: None,
         }
-    }
-
-    pub fn contract_privkey_is_known(&self) -> bool {
-        self.hash_preimage.is_some()
     }
 }
 
@@ -330,7 +322,7 @@ impl Wallet {
             Address::p2wsh(script, NETWORK),
             contract_tx.input[0].previous_output.txid,
             contract_tx.input[0].previous_output.vout,
-            if coin.is_known() {
+            if coin.is_hash_preimage_known() {
                 "  known"
             } else {
                 "unknown"
@@ -811,7 +803,7 @@ impl Wallet {
             ),
         >::new();
         let get_hashvalue = |s: &dyn SwapCoin| {
-            if s.is_known() {
+            if s.is_hash_preimage_known() {
                 return None;
             }
             let swapcoin_hashvalue = read_hashvalue_from_contract(&s.get_contract_redeemscript())
