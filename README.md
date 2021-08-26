@@ -257,6 +257,12 @@ X                <---------------------------------------- privD(D+A)    | (R)
 Y.    privC(C+D) ---------------------------------------->               | (R)
 ```
 
+#### Note on terminology: Sender and Receiver
+
+In the codebase and protocol documentation the words "Sender" and "Receiver" are used. These refer
+to either side of a coinswap address. The entity which created a transaction paying into a coinswap
+address is called the sender, because they sent the coins into the coinswap address. The other
+entity is called the receiver, because they will receive the coins after the coinswap is complete.
 
 ### Further reading
 
