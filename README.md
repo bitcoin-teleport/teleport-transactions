@@ -284,11 +284,11 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9745; code makers and takers to support simple coinswap
 * &#9745; code makers and takers to support multi-transaction coinswaps without any security (e.g. no broadcasting of contract transactions)
 * &#9745; code makers and takers to support multi-hop coinswaps without security
-* &#9744; write more developer documentation
+* &#9745; write more developer documentation
 * &#9744; set up a solution to mirror this repository somewhere else in case github rm's it like they did youtube-dl
-* &#9744; implement and deploy fidelity bonds in joinmarket, to experiment and gain experience with the concept
-* &#9744; add proper error handling to this project, as right now most of the time it will exit on anything unexpected
-* &#9744; code security. For now watchtowers only in the same process as the main scripts
+* &#9745; implement and deploy fidelity bonds in joinmarket, to experiment and gain experience with the concept
+* &#9745; add proper error handling to this project, as right now most of the time it will exit on anything unexpected
+* &#9744; code security, recover from aborts and deveations
 * &#9744; code fidelity bonds
 * &#9744; implement coinswap fees and taker paying for miner fees
 * &#9744; code federated message board seeder servers
@@ -298,7 +298,6 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9744; move wallet files and config to its own data directory ~/.teleport/
 * &#9744; add collateral inputs to receiver contract txes
 * &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to back up these wallets
-* &#9744; watchtowers in a separate process
 * &#9744; RELEASE FOR MAINNET
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
 * &#9744; implement branching and merging coinswaps for takers, so that they can create coinswaps even if they just have one UTXO
@@ -306,9 +305,11 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9744; reproducible builds + pin dependencies to a hash
 * &#9744; break as many blockchain analysis heuristics as possible, e.g. change address detection
 * &#9744; payjoin-with-coinswap with decoy UTXOs
+* &#9744; convert contracts which currently use script to instead use adaptor signatures, aiming to not reveal contracts in the backout case
 * &#9744; abstract away the Core RPC so that its functions can be done in another way, for example for the taker being supported as a plugin for electrum
 * &#9744; randomized locktimes, study with bayesian inference the best way to randomize them so that an individual maker learns as little information as possible from the locktime value
 * &#9744; anti-DOS protocol additions for maker (not using json but some kind of binary format that is harder to DOS)
+* &#9744; make the project into a plugin which can be used by other wallets to do the taker role, try to implement it for electrum wallet
 
 ## Community
 
