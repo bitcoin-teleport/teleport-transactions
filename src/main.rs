@@ -346,10 +346,12 @@ static INIT: Once = Once::new();
 /// Setup function that will only run once, even if called multiple times.
 fn setup_logger() {
     INIT.call_once(|| {
-        env_logger::builder()
-            .is_test(true)
-            .filter_module("teleport", log::LevelFilter::Trace)
-            .init();
+        env_logger::Builder::from_env(
+            env_logger::Env::default()
+                .default_filter_or("teleport=info")
+                .default_write_style_or("always"),
+        )
+        .init();
     });
 }
 
