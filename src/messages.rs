@@ -6,10 +6,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use bitcoin::hashes::{hash160::Hash as Hash160, sha256::Hash as Hash256};
+use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
 use bitcoin::{Script, Transaction};
+
+pub const PREIMAGE_LEN: usize = 32;
+pub type Preimage = [u8; PREIMAGE_LEN];
 
 //TODO the structs here which are actual messages should have the word Message
 //added to their name e.g. SignSendersContractTx
@@ -86,7 +89,7 @@ pub struct SignReceiversContractTx {
 pub struct HashPreimage {
     pub senders_multisig_redeemscripts: Vec<Script>,
     pub receivers_multisig_redeemscripts: Vec<Script>,
-    pub preimage: Hash256,
+    pub preimage: Preimage,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

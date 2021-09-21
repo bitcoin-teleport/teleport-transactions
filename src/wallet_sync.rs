@@ -24,7 +24,6 @@ use bitcoin::{
     hashes::{
         hash160::Hash as Hash160,
         hex::{FromHex, ToHex},
-        sha256::Hash as Hash256,
     },
     secp256k1,
     secp256k1::{Secp256k1, SecretKey, Signature},
@@ -52,6 +51,7 @@ use rand::RngCore;
 use crate::contracts;
 use crate::contracts::{read_hashvalue_from_contract, SwapCoin};
 use crate::error::Error;
+use crate::messages::Preimage;
 
 //these subroutines are coded so that as much as possible they keep all their
 //data in the bitcoin core wallet
@@ -106,7 +106,7 @@ pub struct IncomingSwapCoin {
     pub hashlock_privkey: SecretKey,
     pub funding_amount: u64,
     pub others_contract_sig: Option<Signature>,
-    pub hash_preimage: Option<Hash256>,
+    pub hash_preimage: Option<Preimage>,
 }
 
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
@@ -120,7 +120,7 @@ pub struct OutgoingSwapCoin {
     pub timelock_privkey: SecretKey,
     pub funding_amount: u64,
     pub others_contract_sig: Option<Signature>,
-    pub hash_preimage: Option<Hash256>,
+    pub hash_preimage: Option<Preimage>,
 }
 
 impl IncomingSwapCoin {
