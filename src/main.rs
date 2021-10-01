@@ -8,7 +8,10 @@ use std::iter::repeat;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use bitcoin::hashes::hex::ToHex;
+use bitcoin::hashes::{
+    hex::ToHex,
+    hash160::Hash as Hash160,
+};
 use bitcoin::Amount;
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
@@ -303,6 +306,53 @@ fn run_taker(wallet_file_name: &PathBuf) {
     taker_protocol::start_taker(&rpc, &mut wallet);
 }
 
+fn recover_from_incomplete_coinswap(
+    wallet_file_name: &PathBuf,
+    hashvalue: Hash160,
+    dont_broadcast: bool
+) {
+    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
+            return;
+        }
+    };
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+
+    let incomplete_coinswaps = wallet.find_incomplete_coinswaps(&rpc).unwrap();
+    let incomplete_coinswap = incomplete_coinswaps.get(&hashvalue);
+    if incomplete_coinswap.is_none() {
+        log::error!(target: "main", "hashvalue not refering to incomplete coinswap, run \
+                `wallet-balance` to see list of incomplete coinswaps");
+        return;
+    }
+    let incomplete_coinswap = incomplete_coinswap.unwrap();
+
+    for (ii, outgoing_swapcoin) in incomplete_coinswap.1.iter().enumerate() {
+        wallet.import_redeemscript(&rpc, &outgoing_swapcoin.1.contract_redeemscript,
+            wallet_sync::CoreAddressLabelType::Wallet).unwrap();
+
+        let signed_contract_tx = outgoing_swapcoin.1.get_fully_signed_contract_tx();
+        if dont_broadcast {
+            let txhex = bitcoin::consensus::encode::serialize_hex(&signed_contract_tx);
+            println!("contract_tx_{} = \n{}", ii, txhex);
+            let accepted = rpc.test_mempool_accept(&[txhex.clone()]).unwrap().iter().any(|tma| tma.allowed);
+            assert!(accepted);
+        } else {
+            let txid = rpc.send_raw_transaction(&signed_contract_tx).unwrap();
+            println!("broadcasted {}", txid);
+        }
+    }
+}
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "teleport", about = "A tool for CoinSwap")]
 struct ArgsWithWalletFile {
@@ -318,14 +368,17 @@ struct ArgsWithWalletFile {
 #[derive(Debug, StructOpt)]
 #[structopt(name = "teleport", about = "A tool for CoinSwap")]
 enum Subcommand {
-    /// Generates a new wallet file from a given seed phrase.
+    /// Generates a new seed phrase and wallet file
     GenerateWallet,
 
-    /// Recovers a wallet file from a given seed phrase.
+    /// Recovers a wallet file from an existing seed phrase
     RecoverWallet,
 
     /// Prints current wallet balance.
-    WalletBalance { long_form: Option<bool> },
+    WalletBalance {
+        /// Whether to print entire TXIDs and addresses
+        long_form: Option<bool>
+    },
 
     /// Dumps all information in wallet file for debugging
     DisplayWalletKeys,
@@ -338,6 +391,15 @@ enum Subcommand {
 
     /// Runs Taker.
     CoinswapSend,
+
+    /// Broadcast contract transactions for incomplete coinswap. Locked up bitcoins are
+    /// returned to your wallet after the timeout
+    RecoverFromIncompleteCoinswap {
+        /// Hashvalue as hex string which uniquely identifies the coinswap
+        hashvalue: Hash160,
+        /// Dont broadcast transactions, only output their transaction hex string
+        dont_broadcast: Option<bool>
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -364,6 +426,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Subcommand::CoinswapSend => {
             run_taker(&args.wallet_file_name);
+        }
+        Subcommand::RecoverFromIncompleteCoinswap { hashvalue, dont_broadcast } => {
+            recover_from_incomplete_coinswap(&args.wallet_file_name, hashvalue,
+                dont_broadcast.unwrap_or(false));
         }
     }
 

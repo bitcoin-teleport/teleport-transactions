@@ -180,19 +180,8 @@ impl IncomingSwapCoin {
         let sig_mine = secp.sign(&sighash, &self.my_privkey);
         let sig_other = secp.sign(&sighash, &self.other_privkey.unwrap());
 
-        let (sig_first, sig_second) =
-            if my_pubkey.serialize()[..] < self.other_pubkey.serialize()[..] {
-                (sig_mine, sig_other)
-            } else {
-                (sig_other, sig_mine)
-            };
-
-        input.witness.push(Vec::new()); //first is multisig dummy
-        input.witness.push(sig_first.serialize_der().to_vec());
-        input.witness.push(sig_second.serialize_der().to_vec());
-        input.witness[1].push(SigHashType::All as u8);
-        input.witness[2].push(SigHashType::All as u8);
-        input.witness.push(redeemscript.to_bytes());
+        apply_two_signatures_to_2of2_multisig_spend(&my_pubkey, &self.other_pubkey, &sig_mine,
+            &sig_other, input, redeemscript);
         Ok(())
     }
 }
@@ -226,6 +215,33 @@ impl OutgoingSwapCoin {
             hash_preimage: None,
         }
     }
+
+    pub fn get_fully_signed_contract_tx(&self) -> Transaction {
+        if self.others_contract_sig.is_none() {
+            panic!("invalid state: others_contract_sig not known");
+        }
+        let my_pubkey = self.get_my_pubkey();
+        let multisig_redeemscript = create_multisig_redeemscript(&my_pubkey, &self.other_pubkey);
+        let index = 0;
+        let secp = Secp256k1::new();
+        let sighash = secp256k1::Message::from_slice(
+            &SigHashCache::new(&self.contract_tx).signature_hash(
+                index,
+                &multisig_redeemscript,
+                self.funding_amount,
+                SigHashType::All,
+            )[..],
+        )
+        .unwrap();
+        let sig_mine = secp.sign(&sighash, &self.my_privkey);
+
+        let mut signed_contract_tx = self.contract_tx.clone();
+        apply_two_signatures_to_2of2_multisig_spend(&my_pubkey, &self.other_pubkey, &sig_mine,
+            &self.others_contract_sig.unwrap(), &mut signed_contract_tx.input[index],
+            &multisig_redeemscript);
+        signed_contract_tx
+    }
+
 }
 
 pub trait WalletSwapCoin {
@@ -1308,6 +1324,29 @@ pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Scrip
     .push_opcode(all::OP_PUSHNUM_2)
     .push_opcode(all::OP_CHECKMULTISIG)
     .into_script()
+}
+
+fn apply_two_signatures_to_2of2_multisig_spend(
+        key1: &PublicKey,
+        key2: &PublicKey,
+        sig1: &Signature,
+        sig2: &Signature,
+        input: &mut TxIn,
+        redeemscript: &Script) {
+
+    let (sig_first, sig_second) =
+        if key1.serialize()[..] < key2.serialize()[..] {
+            (sig1, sig2)
+        } else {
+            (sig2, sig1)
+        };
+
+    input.witness.push(Vec::new()); //first is multisig dummy
+    input.witness.push(sig_first.serialize_der().to_vec());
+    input.witness.push(sig_second.serialize_der().to_vec());
+    input.witness[1].push(SigHashType::All as u8);
+    input.witness[2].push(SigHashType::All as u8);
+    input.witness.push(redeemscript.to_bytes());
 }
 
 fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
