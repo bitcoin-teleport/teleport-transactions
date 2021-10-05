@@ -9,7 +9,7 @@ use tokio::prelude::*;
 use tokio::time::sleep;
 
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::{hash160::Hash as Hash160, sha256::Hash as Hash256};
+use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
@@ -30,7 +30,7 @@ use crate::contracts::{
 };
 use crate::error::Error;
 use crate::messages::{
-    ConfirmedCoinSwapTxInfo, HashPreimage, MakerToTakerMessage, NextCoinSwapTxInfo,
+    ConfirmedCoinSwapTxInfo, HashPreimage, MakerToTakerMessage, NextCoinSwapTxInfo, Preimage,
     PrivateKeyHandover, ProofOfFunding, ReceiversContractTxInfo, SenderContractTxNoncesInfo,
     SendersAndReceiversContractSigs, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage,
@@ -73,7 +73,6 @@ async fn send_coinswap(
     let mut preimage = [0u8; 32];
     OsRng.fill_bytes(&mut preimage);
     let hashvalue = Hash160::hash(&preimage);
-    let preimage = Hash256::from_inner(preimage);
 
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count;
 
@@ -909,7 +908,7 @@ fn create_incoming_swapcoins(
     next_peer_hashlock_keys_or_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_multisig_keys_or_nonces: &[SecretKey],
-    preimage: Hash256,
+    preimage: Preimage,
 ) -> Result<Vec<IncomingSwapCoin>, Error> {
     let next_swap_multisig_redeemscripts = maker_sign_sender_and_receiver_contracts
         .senders_contract_txes_info
@@ -1008,7 +1007,7 @@ async fn send_hash_preimage_and_get_private_keys(
     socket_writer: &mut WriteHalf<'_>,
     senders_multisig_redeemscripts: Vec<Script>,
     receivers_multisig_redeemscripts: Vec<Script>,
-    preimage: Hash256,
+    preimage: Preimage,
 ) -> Result<PrivateKeyHandover, Error> {
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
     send_message(
