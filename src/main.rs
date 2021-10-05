@@ -8,10 +8,7 @@ use std::iter::repeat;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use bitcoin::hashes::{
-    hex::ToHex,
-    hash160::Hash as Hash160,
-};
+use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
 use bitcoin::Amount;
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
@@ -146,10 +143,10 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
     let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
-    println!("= wallet balance =");
+    println!("= spendable wallet balance =");
     println!(
         "{:16} {:24} {:8} {:<7} value",
-        "outpoint", "address", "swapcoin", "conf",
+        "outpoint", "address", "type", "conf",
     );
     for utxo in utxos {
         let txid = utxo.txid.to_hex();
@@ -164,7 +161,11 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
             if long_form { &addr } else { &addr[0..10] },
             if long_form { "" } else { "...." },
             if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
-            if utxo.witness_script.is_some() { "yes" } else { "no" },
+            if utxo.witness_script.is_some() {
+                "swapcoin"
+            } else {
+                if utxo.descriptor.is_some() { "seed" } else { "timelock" }
+            },
             utxo.confirmations,
             utxo.amount
         );
@@ -222,6 +223,33 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
                 "hashvalue = {}\ntotal balance = {}",
                 &hashvalue.to_hex()[..],
                 balance
+            );
+        }
+    }
+
+    let (_incoming_contract_utxos, mut outgoing_contract_utxos) =
+        wallet.find_live_contract_unspents(&rpc).unwrap();
+    if outgoing_contract_utxos.len() > 0 {
+        outgoing_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
+        println!("= live timelocked contracts =");
+        println!(
+            "{:16} {:8} {:<7} {:<8} {:6}",
+            "outpoint", "timelock", "conf", "locked?", "value"
+        );
+        for (outgoing_swapcoin, utxo) in outgoing_contract_utxos {
+            let txid = utxo.txid.to_hex();
+            let timelock =
+                read_locktime_from_contract(&outgoing_swapcoin.contract_redeemscript).unwrap();
+            #[rustfmt::skip]
+            println!("{}{}{}:{} {:<8} {:<7} {:<8} {}",
+                if long_form { &txid } else {&txid[0..6] },
+                if long_form { "" } else { ".." },
+                if long_form { &"" } else { &txid[58..64] },
+                utxo.vout,
+                timelock,
+                utxo.confirmations,
+                if utxo.confirmations >= timelock.into() { "unlocked" } else { "locked" },
+                utxo.amount
             );
         }
     }
@@ -309,7 +337,7 @@ fn run_taker(wallet_file_name: &PathBuf) {
 fn recover_from_incomplete_coinswap(
     wallet_file_name: &PathBuf,
     hashvalue: Hash160,
-    dont_broadcast: bool
+    dont_broadcast: bool,
 ) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
@@ -337,14 +365,23 @@ fn recover_from_incomplete_coinswap(
     let incomplete_coinswap = incomplete_coinswap.unwrap();
 
     for (ii, outgoing_swapcoin) in incomplete_coinswap.1.iter().enumerate() {
-        wallet.import_redeemscript(&rpc, &outgoing_swapcoin.1.contract_redeemscript,
-            wallet_sync::CoreAddressLabelType::Wallet).unwrap();
+        wallet
+            .import_redeemscript(
+                &rpc,
+                &outgoing_swapcoin.1.contract_redeemscript,
+                wallet_sync::CoreAddressLabelType::Wallet,
+            )
+            .unwrap();
 
         let signed_contract_tx = outgoing_swapcoin.1.get_fully_signed_contract_tx();
         if dont_broadcast {
             let txhex = bitcoin::consensus::encode::serialize_hex(&signed_contract_tx);
             println!("contract_tx_{} = \n{}", ii, txhex);
-            let accepted = rpc.test_mempool_accept(&[txhex.clone()]).unwrap().iter().any(|tma| tma.allowed);
+            let accepted = rpc
+                .test_mempool_accept(&[txhex.clone()])
+                .unwrap()
+                .iter()
+                .any(|tma| tma.allowed);
             assert!(accepted);
         } else {
             let txid = rpc.send_raw_transaction(&signed_contract_tx).unwrap();
@@ -377,7 +414,7 @@ enum Subcommand {
     /// Prints current wallet balance.
     WalletBalance {
         /// Whether to print entire TXIDs and addresses
-        long_form: Option<bool>
+        long_form: Option<bool>,
     },
 
     /// Dumps all information in wallet file for debugging
@@ -398,8 +435,8 @@ enum Subcommand {
         /// Hashvalue as hex string which uniquely identifies the coinswap
         hashvalue: Hash160,
         /// Dont broadcast transactions, only output their transaction hex string
-        dont_broadcast: Option<bool>
-    }
+        dont_broadcast: Option<bool>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -427,9 +464,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::CoinswapSend => {
             run_taker(&args.wallet_file_name);
         }
-        Subcommand::RecoverFromIncompleteCoinswap { hashvalue, dont_broadcast } => {
-            recover_from_incomplete_coinswap(&args.wallet_file_name, hashvalue,
-                dont_broadcast.unwrap_or(false));
+        Subcommand::RecoverFromIncompleteCoinswap {
+            hashvalue,
+            dont_broadcast,
+        } => {
+            recover_from_incomplete_coinswap(
+                &args.wallet_file_name,
+                hashvalue,
+                dont_broadcast.unwrap_or(false),
+            );
         }
     }
 

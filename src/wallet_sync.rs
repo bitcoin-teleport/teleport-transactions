@@ -50,7 +50,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::contracts;
-use crate::contracts::{read_hashvalue_from_contract, SwapCoin};
+use crate::contracts::{read_hashvalue_from_contract, read_locktime_from_contract, SwapCoin};
 use crate::error::Error;
 
 //these subroutines are coded so that as much as possible they keep all their
@@ -180,8 +180,14 @@ impl IncomingSwapCoin {
         let sig_mine = secp.sign(&sighash, &self.my_privkey);
         let sig_other = secp.sign(&sighash, &self.other_privkey.unwrap());
 
-        apply_two_signatures_to_2of2_multisig_spend(&my_pubkey, &self.other_pubkey, &sig_mine,
-            &sig_other, input, redeemscript);
+        apply_two_signatures_to_2of2_multisig_spend(
+            &my_pubkey,
+            &self.other_pubkey,
+            &sig_mine,
+            &sig_other,
+            input,
+            redeemscript,
+        );
         Ok(())
     }
 }
@@ -236,12 +242,16 @@ impl OutgoingSwapCoin {
         let sig_mine = secp.sign(&sighash, &self.my_privkey);
 
         let mut signed_contract_tx = self.contract_tx.clone();
-        apply_two_signatures_to_2of2_multisig_spend(&my_pubkey, &self.other_pubkey, &sig_mine,
-            &self.others_contract_sig.unwrap(), &mut signed_contract_tx.input[index],
-            &multisig_redeemscript);
+        apply_two_signatures_to_2of2_multisig_spend(
+            &my_pubkey,
+            &self.other_pubkey,
+            &sig_mine,
+            &self.others_contract_sig.unwrap(),
+            &mut signed_contract_tx.input[index],
+            &multisig_redeemscript,
+        );
         signed_contract_tx
     }
-
 }
 
 pub trait WalletSwapCoin {
@@ -687,9 +697,35 @@ impl Wallet {
         Ok(())
     }
 
-    fn is_utxo_ours_and_spendable(&self, u: &ListUnspentResultEntry) -> bool {
+    fn create_contract_scriptpubkey_swapcoin_hashmap(&self) -> HashMap<Script, &OutgoingSwapCoin> {
+        self.outgoing_swap_coins
+            .values()
+            .map(|osc| {
+                (
+                    Address::p2wsh(&osc.contract_redeemscript, NETWORK).script_pubkey(),
+                    osc,
+                )
+            })
+            .collect::<HashMap<Script, &OutgoingSwapCoin>>()
+    }
+
+    fn is_utxo_ours_and_spendable(
+        &self,
+        u: &ListUnspentResultEntry,
+        contract_scriptpubkeys_outgoing_swapcoins: &HashMap<Script, &OutgoingSwapCoin>,
+    ) -> bool {
         if u.descriptor.is_none() {
-            return false;
+            let swapcoin = contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key);
+            if swapcoin.is_none() {
+                return false;
+            }
+            let swapcoin = swapcoin.unwrap();
+            let timelock = read_locktime_from_contract(&swapcoin.contract_redeemscript);
+            if timelock.is_none() {
+                return false;
+            }
+            let timelock = timelock.unwrap();
+            return u.confirmations >= timelock.into();
         }
         let descriptor = u.descriptor.as_ref().unwrap();
         if let Some(ret) = self.get_hd_path_from_descriptor(&descriptor) {
@@ -725,10 +761,14 @@ impl Wallet {
         //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
 
+        let contract_scriptpubkeys_outgoing_swapcoins =
+            self.create_contract_scriptpubkey_swapcoin_hashmap();
         let all_unspents = rpc.list_unspent(None, None, None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
-            .filter(|u| !self.is_utxo_ours_and_spendable(u))
+            .filter(|u| {
+                !self.is_utxo_ours_and_spendable(u, &contract_scriptpubkeys_outgoing_swapcoins)
+            })
             .map(|u| OutPoint {
                 txid: u.txid,
                 vout: u.vout,
@@ -742,12 +782,16 @@ impl Wallet {
         &self,
         rpc: &Client,
     ) -> Result<Vec<ListUnspentResultEntry>, Error> {
+        let contract_scriptpubkeys_outgoing_swapcoins =
+            self.create_contract_scriptpubkey_swapcoin_hashmap();
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
         Ok(rpc
             .list_unspent(None, None, None, None, None)?
             .iter()
-            .filter(|u| self.is_utxo_ours_and_spendable(u))
+            .filter(|u| {
+                self.is_utxo_ours_and_spendable(u, &contract_scriptpubkeys_outgoing_swapcoins)
+            })
             .cloned()
             .collect::<Vec<ListUnspentResultEntry>>())
     }
@@ -830,6 +874,60 @@ impl Wallet {
             };
         }
         Ok(incomplete_swapcoin_groups)
+    }
+
+    // live contract refers to a contract tx which has been broadcast
+    // i.e. where there are UTXOs protected by contract_redeemscript's that we know about
+    pub fn find_live_contract_unspents(
+        &self,
+        rpc: &Client,
+    ) -> Result<
+        (
+            Vec<(&IncomingSwapCoin, ListUnspentResultEntry)>,
+            Vec<(&OutgoingSwapCoin, ListUnspentResultEntry)>,
+        ),
+        Error,
+    > {
+        // populate hashmaps where key is contract scriptpubkey and value is the swapcoin
+        let contract_scriptpubkeys_incoming_swapcoins = self
+            .incoming_swap_coins
+            .values()
+            .map(|isc| {
+                (
+                    Address::p2wsh(&isc.contract_redeemscript, NETWORK).script_pubkey(),
+                    isc,
+                )
+            })
+            .collect::<HashMap<Script, &IncomingSwapCoin>>();
+        let contract_scriptpubkeys_outgoing_swapcoins =
+            self.create_contract_scriptpubkey_swapcoin_hashmap();
+
+        rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
+            .map_err(|e| Error::Rpc(e))?;
+        let listunspent = rpc.list_unspent(None, None, None, None, None)?;
+
+        let (incoming_swap_coins_utxos, outgoing_swap_coins_utxos): (Vec<_>, Vec<_>) = listunspent
+            .iter()
+            .map(|u| {
+                (
+                    contract_scriptpubkeys_incoming_swapcoins.get(&u.script_pub_key),
+                    contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key),
+                    u,
+                )
+            })
+            .filter(|isc_osc_u| isc_osc_u.0.is_some() || isc_osc_u.1.is_some())
+            .partition(|isc_osc_u| isc_osc_u.0.is_some());
+
+        Ok((
+            incoming_swap_coins_utxos
+                .iter()
+                .map(|isc_osc_u| (*isc_osc_u.0.unwrap(), isc_osc_u.2.clone()))
+                .collect::<Vec<(&IncomingSwapCoin, ListUnspentResultEntry)>>(),
+            outgoing_swap_coins_utxos
+                .iter()
+                .map(|isc_osc_u| (*isc_osc_u.1.unwrap(), isc_osc_u.2.clone()))
+                .collect::<Vec<(&OutgoingSwapCoin, ListUnspentResultEntry)>>(),
+        ))
     }
 
     // returns None if not a hd descriptor (but possibly a swapcoin (multisig) descriptor instead)
@@ -1327,19 +1425,18 @@ pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Scrip
 }
 
 fn apply_two_signatures_to_2of2_multisig_spend(
-        key1: &PublicKey,
-        key2: &PublicKey,
-        sig1: &Signature,
-        sig2: &Signature,
-        input: &mut TxIn,
-        redeemscript: &Script) {
-
-    let (sig_first, sig_second) =
-        if key1.serialize()[..] < key2.serialize()[..] {
-            (sig1, sig2)
-        } else {
-            (sig2, sig1)
-        };
+    key1: &PublicKey,
+    key2: &PublicKey,
+    sig1: &Signature,
+    sig2: &Signature,
+    input: &mut TxIn,
+    redeemscript: &Script,
+) {
+    let (sig_first, sig_second) = if key1.serialize()[..] < key2.serialize()[..] {
+        (sig1, sig2)
+    } else {
+        (sig2, sig1)
+    };
 
     input.witness.push(Vec::new()); //first is multisig dummy
     input.witness.push(sig_first.serialize_der().to_vec());
