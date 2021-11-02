@@ -41,6 +41,10 @@ jobs:
           addrs=$(bitcoin-cli -datadir=.bitcoin getnewaddress)
           bitcoin-cli -datadir=.bitcoin generatetoaddress 101 $addrs
 
+      # Pin grcov to v0.8.2 because of build failure at 0.8.3
+      - name: Install grcov
+        run: cargo install grcov --force --version 0.8.2
+
       # Tests are run with code coverage support
       - name: Run cargo test
         env:
