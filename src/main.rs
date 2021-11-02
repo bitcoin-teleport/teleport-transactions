@@ -26,6 +26,7 @@ mod error;
 mod maker_protocol;
 mod messages;
 mod offerbook_sync;
+mod serialization;
 mod taker_protocol;
 
 fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
@@ -500,10 +501,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod test {
     use bitcoin::util::amount::Amount;
     use serde_json::Value;
-    use std::{thread, time};
-    use tokio::io::AsyncWriteExt;
-
     use std::str::FromStr;
+    use std::{thread, time};
+
+    use crate::messages::{TakerToMakerMessage, TestMessage};
 
     use super::*;
 
@@ -546,7 +547,12 @@ mod test {
             let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
             let (_, mut writer) = stream.split();
 
-            writer.write_all(b"kill").await.unwrap();
+            crate::taker_protocol::send_message(
+                &mut writer,
+                TakerToMakerMessage::TestMessage(TestMessage),
+            )
+            .await
+            .unwrap();
         }
         thread::sleep(time::Duration::from_secs(5));
     }
