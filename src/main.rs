@@ -37,7 +37,7 @@ fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return Ok(());
         }
     };
@@ -130,14 +130,14 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
-            log::trace!(target: "main", "error loading wallet file: {:?}", error);
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
@@ -265,7 +265,7 @@ fn display_wallet_keys(wallet_file_name: &PathBuf) {
     let wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
-            log::trace!(target: "main", "error loading wallet file: {:?}", error);
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
@@ -276,14 +276,14 @@ fn print_receive_invoice(wallet_file_name: &PathBuf) {
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
-            log::trace!(target: "main", "error loading wallet file: {:?}", error);
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
@@ -303,14 +303,14 @@ fn run_maker(wallet_file_name: &PathBuf, port: u16) {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
-            log::trace!(target: "main", "error loading wallet file: {:?}", error);
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
@@ -325,14 +325,14 @@ fn run_taker(wallet_file_name: &PathBuf) {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
     let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name) {
         Ok(w) => w,
         Err(error) => {
-            log::trace!(target: "main", "error loading wallet file: {:?}", error);
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
