@@ -9,8 +9,9 @@ use std::path::PathBuf;
 use std::sync::Once;
 use std::sync::{Arc, RwLock};
 
-use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
-use bitcoin::Amount;
+use bitcoin::consensus::encode::deserialize;
+use bitcoin::hashes::{hash160::Hash as Hash160, hex::FromHex, hex::ToHex};
+use bitcoin::{Amount, Transaction};
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
@@ -27,6 +28,10 @@ mod maker_protocol;
 mod messages;
 mod offerbook_sync;
 mod taker_protocol;
+mod watchtower_client;
+
+mod watchtower_protocol;
+use watchtower_protocol::ContractInfo;
 
 fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     let rpc = match get_bitcoin_rpc() {
@@ -391,6 +396,19 @@ fn recover_from_incomplete_coinswap(
     }
 }
 
+fn run_watchtower() {
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+
+    let rpc_ptr = Arc::new(rpc);
+    watchtower_protocol::start_watchtower(rpc_ptr);
+}
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "teleport", about = "A tool for CoinSwap")]
 struct ArgsWithWalletFile {
@@ -437,6 +455,14 @@ enum Subcommand {
         hashvalue: Hash160,
         /// Dont broadcast transactions, only output their transaction hex string
         dont_broadcast: Option<bool>,
+    },
+
+    /// Run watchtower
+    RunWatchtower,
+
+    /// Test watchtower client
+    TestWatchtowerClient {
+        contract_transactions_hex: Vec<String>,
     },
 }
 
@@ -490,6 +516,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 hashvalue,
                 dont_broadcast.unwrap_or(false),
             );
+        }
+        Subcommand::RunWatchtower => {
+            run_watchtower();
+        }
+        Subcommand::TestWatchtowerClient {
+            mut contract_transactions_hex,
+        } => {
+            if contract_transactions_hex.len() == 0 {
+                // https://bitcoin.stackexchange.com/questions/68811/what-is-the-absolute-smallest-size-of-the-data-bytes-that-a-blockchain-transac
+                contract_transactions_hex = vec![String::from("0200000000010100000000000000000000000000000000000000000000000000000000000000000000000000fdffffff010100000000000000160014ffffffffffffffffffffffffffffffffffffffff022102000000000000000000000000000000000000000000000000000000000000000147304402207777777777777777777777777777777777777777777777777777777777777777022055555555555555555555555555555555555555555555555555555555555555550100000000")];
+            }
+            let contract_txes = contract_transactions_hex
+                .iter()
+                .map(|cth| {
+                    deserialize::<Transaction>(
+                        &Vec::from_hex(&cth).expect("Invalid transaction hex string"),
+                    )
+                    .expect("Unable to deserialize transaction hex")
+                })
+                .collect::<Vec<Transaction>>();
+            let contracts_to_watch = contract_txes
+                .iter()
+                .map(|contract_tx| ContractInfo {
+                    contract_tx: contract_tx.clone(),
+                })
+                .collect::<Vec<ContractInfo>>();
+            watchtower_client::test_watchtower_client(contracts_to_watch);
         }
     }
 
