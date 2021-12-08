@@ -291,7 +291,7 @@ fn print_receive_invoice(wallet_file_name: &PathBuf) {
             return;
         }
     };
-    println!("receive invoice:\n\nbitcoin:{}\n", addr);
+    println!("{}", addr);
 }
 
 fn run_maker(wallet_file_name: &PathBuf, port: u16) {
