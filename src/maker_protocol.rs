@@ -2,8 +2,9 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tokio::io::BufReader;
-use tokio::net::tcp::WriteHalf;
+use bitcoin::consensus::Encodable;
+use tokio::io::{AsyncReadExt, BufReader};
+use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 use tokio::select;
@@ -12,7 +13,7 @@ use tokio::time::sleep;
 
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::{OutPoint, PublicKey, Transaction, TxOut};
+use bitcoin::{OutPoint, PublicKey, Transaction, TxOut, VarInt};
 use bitcoincore_rpc::{Client, RpcApi};
 
 use itertools::izip;
@@ -25,9 +26,12 @@ use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
     ReceiversContractSig, SenderContractTxInfo, SendersAndReceiversContractSigs,
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
-    SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
+    SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage, TestMessage,
 };
+use crate::serialization::{NetDeserilize, NetSerialize};
 use crate::wallet_sync::{CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
+
+use crate::taker_protocol::read_varint;
 
 // A structure denoting expectation of type of taker message.
 // Used in the [ConnectionState] structure.
@@ -128,31 +132,27 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
             }
 
             loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(n) if n == 0 => {
+                let message = match read_message(&mut reader).await {
+                    Ok(TakerToMakerMessage::TestMessage(_)) => {
+                        server_loop_comms_tx
+                            .send(Error::Protocol("kill signal"))
+                            .await
+                            .unwrap();
+                        break;
+                    }
+                    Err(Error::Disk(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                         log::info!("Reached EOF");
                         break;
                     }
-                    Ok(_n) => (),
                     Err(e) => {
-                        log::error!("error reading from socket: {:?}", e);
+                        log::error!("Error reading from stream : {:?}", e);
                         break;
                     }
+                    Ok(msg) => msg,
                 };
-                #[cfg(test)]
-                if line == "kill".to_string() {
-                    server_loop_comms_tx
-                        .send(Error::Protocol("kill signal"))
-                        .await
-                        .unwrap();
-                    log::info!("Kill signal received, stopping maker....");
-                    break;
-                }
 
-                line = line.trim_end().to_string();
                 let message_result = handle_message(
-                    line,
+                    message,
                     &mut connection_state,
                     Arc::clone(&client_rpc),
                     Arc::clone(&client_wallet),
@@ -171,14 +171,13 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                     Err(err) => {
                         log::error!("error handling client request: {:?}", err);
                         match err {
-                            Error::Network(_e) => (),
-                            Error::Protocol(_e) => (),
                             Error::Disk(e) => {
                                 server_loop_comms_tx.send(Error::Disk(e)).await.unwrap()
                             }
                             Error::Rpc(e) => {
                                 server_loop_comms_tx.send(Error::Rpc(e)).await.unwrap()
                             }
+                            _ => (),
                         };
                         break;
                     }
@@ -188,28 +187,45 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
     }
 }
 
-async fn send_message(
+pub(crate) async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
-    first_message: &MakerToTakerMessage,
+    message: &MakerToTakerMessage,
 ) -> Result<(), Error> {
-    let mut message_bytes = serde_json::to_vec(first_message).map_err(|e| io::Error::from(e))?;
-    message_bytes.push(b'\n');
-    socket_writer.write_all(&message_bytes).await?;
+    let mut message_bytes = vec![];
+    let len = message.net_serialize(&mut message_bytes)?;
+    let var_len = VarInt(len as u64);
+    let mut result = vec![];
+
+    var_len
+        .consensus_encode(&mut result)
+        .map_err(|e| Error::Serialisation(e.into()))?;
+
+    result.extend_from_slice(&message_bytes);
+    socket_writer.write_all(&mut result).await?;
+
     Ok(())
 }
 
+pub(crate) async fn read_message(
+    reader: &mut BufReader<ReadHalf<'_>>,
+) -> Result<TakerToMakerMessage, Error> {
+    let len = read_varint(reader).await?;
+    let mut buff = Vec::<u8>::with_capacity(len.0 as usize);
+    buff.resize(len.0 as usize, 0);
+    reader.read_exact(&mut buff).await?;
+
+    let message = TakerToMakerMessage::net_deserialize(&buff[..])?;
+
+    Ok(message)
+}
+
 fn handle_message(
-    line: String,
+    request: TakerToMakerMessage,
     connection_state: &mut ConnectionState,
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     from_addrs: SocketAddr,
 ) -> Result<Option<MakerToTakerMessage>, Error> {
-    let request: TakerToMakerMessage = match serde_json::from_str(&line) {
-        Ok(r) => r,
-        Err(_e) => return Err(Error::Protocol("message parsing error")),
-    };
-
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
             if let TakerToMakerMessage::TakerHello(_) = request {

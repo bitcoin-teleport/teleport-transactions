@@ -1,19 +1,18 @@
 use std::collections::HashMap;
-use std::io::ErrorKind;
 use std::time::Duration;
 
-use tokio::io::BufReader;
+use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::time::sleep;
 
-use bitcoin::consensus::encode::deserialize;
+use bitcoin::consensus::encode::{deserialize, Encodable};
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::key::PublicKey;
-use bitcoin::{BlockHash, OutPoint, Script, Transaction, Txid};
+use bitcoin::{BlockHash, OutPoint, Script, Transaction, Txid, VarInt};
 use bitcoincore_rpc::{Client, RpcApi};
 
 use rand::rngs::OsRng;
@@ -35,6 +34,8 @@ use crate::messages::{
     SendersAndReceiversContractSigs, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage,
 };
+
+use crate::serialization::{NetDeserilize, NetSerialize};
 
 #[cfg(test)]
 use crate::get_bitcoin_rpc;
@@ -444,34 +445,68 @@ async fn send_coinswap(
     Ok(())
 }
 
-async fn send_message(
+pub(crate) async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: TakerToMakerMessage,
 ) -> Result<(), Error> {
-    log::debug!("==> {:#?}", message);
-    let mut result_bytes = serde_json::to_vec(&message).map_err(|e| io::Error::from(e))?;
-    result_bytes.push(b'\n');
-    socket_writer.write_all(&result_bytes).await?;
+    let mut message_bytes = vec![];
+    let len = message.net_serialize(&mut message_bytes)?;
+    let var_len = VarInt(len as u64);
+    let mut result = vec![];
+
+    var_len
+        .consensus_encode(&mut result)
+        .map_err(|e| Error::Serialisation(e.into()))?;
+
+    result.extend_from_slice(&message_bytes);
+    socket_writer.write_all(&mut result).await?;
+
     Ok(())
 }
 
-async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTakerMessage, Error> {
-    let mut line = String::new();
-    let n = reader.read_line(&mut line).await?;
-    if n == 0 {
-        return Err(Error::Network(Box::new(io::Error::new(
-            ErrorKind::ConnectionReset,
-            "EOF",
-        ))));
-    }
+pub(crate) async fn read_message(
+    reader: &mut BufReader<ReadHalf<'_>>,
+) -> Result<MakerToTakerMessage, Error> {
+    let len = read_varint(reader).await?;
+    let mut buff = Vec::<u8>::with_capacity(len.0 as usize);
+    buff.resize(len.0 as usize, 0);
+    reader.read_exact(&mut buff).await?;
 
-    let message: MakerToTakerMessage = match serde_json::from_str(&line) {
-        Ok(r) => r,
-        Err(_e) => return Err(Error::Protocol("json parsing error")),
-    };
+    let message = MakerToTakerMessage::net_deserialize(&buff[..])?;
 
-    log::debug!("<== {:#?}", message);
     Ok(message)
+}
+
+pub(crate) async fn read_varint(reader: &mut BufReader<ReadHalf<'_>>) -> Result<VarInt, Error> {
+    let n = reader.read_u8().await?;
+
+    match n {
+        0xFF => {
+            let x = reader.read_u64_le().await?;
+            if x < 0x100000000 {
+                Err(self::Error::Protocol("Bad VarInt"))
+            } else {
+                Ok(VarInt(x))
+            }
+        }
+        0xFE => {
+            let x = reader.read_u32_le().await?;
+            if x < 0x10000 {
+                Err(self::Error::Protocol("Bad VarInt"))
+            } else {
+                Ok(VarInt(x as u64))
+            }
+        }
+        0xFD => {
+            let x = reader.read_u16_le().await?;
+            if x < 0xFD {
+                Err(self::Error::Protocol("Bad VarInt"))
+            } else {
+                Ok(VarInt(x as u64))
+            }
+        }
+        n => Ok(VarInt(n as u64)),
+    }
 }
 
 async fn handshake_maker(
