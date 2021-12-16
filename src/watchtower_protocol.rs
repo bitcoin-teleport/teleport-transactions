@@ -14,11 +14,12 @@ use tokio::time::sleep;
 
 use serde::{Deserialize, Serialize};
 
-use bitcoin::{Transaction, Txid};
+use bitcoin::Txid;
 use bitcoincore_rpc;
 use bitcoincore_rpc::{json::GetBlockResult, Client, RpcApi};
 
 use crate::error::Error;
+use crate::watchtower_client::ContractInfo;
 
 //needed things for each contract: contract_redeemscript, fully signed contract_tx
 // tx which spends from the hashlock branch minus the preimage
@@ -26,11 +27,6 @@ use crate::error::Error;
 // we dont even need separate incoming/outgoing variables, we could just send a list
 // of all contract_tx
 //later will add part about
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ContractInfo {
-    pub contract_tx: Transaction,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WatchContractTxes {
@@ -164,6 +160,15 @@ async fn run(rpc: Arc<Client>) -> Result<(), Error> {
                         break;
                     }
                 };
+                #[cfg(test)]
+                if line == "kill".to_string() {
+                    server_loop_err_comms_tx
+                        .send(Error::Protocol("kill signal"))
+                        .await
+                        .unwrap();
+                    log::info!("Kill signal received, stopping watchtower....");
+                    break;
+                }
 
                 line = line.trim_end().to_string();
                 let message_result = handle_message(line, &watched_txes_comms_tx).await;

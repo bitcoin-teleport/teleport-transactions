@@ -28,10 +28,10 @@ mod maker_protocol;
 mod messages;
 mod offerbook_sync;
 mod taker_protocol;
-mod watchtower_client;
-
 mod watchtower_protocol;
-use watchtower_protocol::ContractInfo;
+
+mod watchtower_client;
+use watchtower_client::ContractInfo;
 
 fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     let rpc = match get_bitcoin_rpc() {
@@ -594,7 +594,7 @@ mod test {
             .unwrap();
     }
 
-    async fn kill_maker(addr: &str) {
+    async fn send_test_kill_signal(addr: &str) {
         {
             let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
             let (_, mut writer) = stream.split();
@@ -686,7 +686,11 @@ mod test {
         assert_eq!(maker1.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
         assert_eq!(maker2.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
 
-        // Start threads and execute swaps
+        // Start watchtower, makers and taker to execute a coinswap
+        let watchtower_thread = thread::spawn(|| {
+            run_watchtower(); //which listens on port 6103
+        });
+
         let maker1_thread = thread::spawn(|| {
             run_maker(&PathBuf::from_str(MAKER1).unwrap(), 6102);
         });
@@ -703,13 +707,13 @@ mod test {
 
         taker_thread.join().unwrap();
 
-        kill_maker("127.0.0.1:6102").await;
-
-        kill_maker("127.0.0.1:16102").await;
+        send_test_kill_signal("127.0.0.1:6102").await;
+        send_test_kill_signal("127.0.0.1:16102").await;
+        send_test_kill_signal("127.0.0.1:6103").await;
 
         maker1_thread.join().unwrap();
-
         maker2_thread.join().unwrap();
+        watchtower_thread.join().unwrap();
 
         // Recreate the wallet
         let taker = Wallet::load_wallet_from_file(&TAKER).unwrap();

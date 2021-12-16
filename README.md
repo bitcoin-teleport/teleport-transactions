@@ -70,7 +70,9 @@ total balance = 0.15000000 BTC
 
 * On one terminal run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-maker 6102`. You should see the message `listening on port 6102`.
 
-* On another terminal run a maker server with `cargo run -- --wallet-file-name=maker2.teleport run-maker 16102`. You should see the message `listening on port 16102`.
+* On another terminal run another maker server with `cargo run -- --wallet-file-name=maker2.teleport run-maker 16102`. You should see the message `listening on port 16102`.
+
+* On another terminal run a watchtower with `cargo run -- run-watchtower`. You should see the message `Starting teleport watchtower`. In the teleport project contracts are enforced with one or more watchtowers, which are required for the coinswap protocol to be secure against the maker's coins being stolen.
 
 * On another terminal start a coinswap with `cargo run -- --wallet-file-name=taker.teleport coinswap-send`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell regtest to generate another block (or just wait if you're using testnet).
 

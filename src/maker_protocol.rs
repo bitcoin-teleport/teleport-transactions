@@ -28,6 +28,7 @@ use crate::messages::{
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
 use crate::wallet_sync::{CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
+use crate::watchtower_client::{register_coinswap_with_watchtowers, ContractInfo};
 
 // A structure denoting expectation of type of taker message.
 // Used in the [ConnectionState] structure.
@@ -157,7 +158,8 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                     Arc::clone(&client_rpc),
                     Arc::clone(&client_wallet),
                     addr,
-                );
+                )
+                .await;
                 match message_result {
                     Ok(reply) => {
                         if let Some(message) = reply {
@@ -198,7 +200,7 @@ async fn send_message(
     Ok(())
 }
 
-fn handle_message(
+async fn handle_message(
     line: String,
     connection_state: &mut ConnectionState,
     rpc: Arc<Client>,
@@ -318,7 +320,8 @@ fn handle_message(
                 // Nothing to send. Maker now creates and broadcasts his funding Txs
                 log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::SignReceiversContractTx;
-                handle_senders_and_receivers_contract_sigs(connection_state, rpc, wallet, message)?
+                handle_senders_and_receivers_contract_sigs(connection_state, rpc, wallet, message)
+                    .await?
             } else {
                 return Err(Error::Protocol(
                     "Expected sender's and reciever's contract signatures",
@@ -571,7 +574,7 @@ fn handle_proof_of_funding(
     ))
 }
 
-fn handle_senders_and_receivers_contract_sigs(
+async fn handle_senders_and_receivers_contract_sigs(
     connection_state: &mut ConnectionState,
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
@@ -615,6 +618,19 @@ fn handle_senders_and_receivers_contract_sigs(
             outgoing_swapcoin.others_contract_sig = Some(senders_sig)
         });
 
+    register_coinswap_with_watchtowers(
+        incoming_swapcoins
+            .iter()
+            .map(|isc| ContractInfo {
+                contract_tx: isc.contract_tx.clone(),
+            })
+            .chain(outgoing_swapcoins.iter().map(|osc| ContractInfo {
+                contract_tx: osc.contract_tx.clone(),
+            }))
+            .collect::<Vec<ContractInfo>>(),
+    )
+    .await?;
+
     let mut w = wallet.write().unwrap();
     incoming_swapcoins
         .iter()
@@ -623,8 +639,6 @@ fn handle_senders_and_receivers_contract_sigs(
         .iter()
         .for_each(|outgoing_swapcoin| w.add_outgoing_swapcoin(outgoing_swapcoin.clone()));
     w.update_swap_coins_list()?;
-
-    //TODO add coin to watchtowers
 
     for my_funding_tx in connection_state.pending_funding_txes.as_ref().unwrap() {
         log::debug!("Broadcasting My Funding Tx : {:#?}", my_funding_tx);

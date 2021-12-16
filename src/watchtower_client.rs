@@ -2,14 +2,23 @@ use tokio::io::BufReader;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
+use serde::{Deserialize, Serialize};
+
+use bitcoin::Transaction;
+
 use crate::error::Error;
 use crate::watchtower_protocol::{
-    ContractInfo, MakerToWatchtowerMessage, WatchContractTxes, WatchtowerToMakerMessage,
+    MakerToWatchtowerMessage, WatchContractTxes, WatchtowerToMakerMessage,
 };
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ContractInfo {
+    pub contract_tx: Transaction,
+}
 
 #[tokio::main]
 pub async fn test_watchtower_client(contracts_to_watch: Vec<ContractInfo>) {
-    register_coinswap_with_watchtower(contracts_to_watch)
+    register_coinswap_with_watchtowers(contracts_to_watch)
         .await
         .unwrap();
 }
@@ -19,7 +28,7 @@ fn parse_message(line: &str) -> Result<WatchtowerToMakerMessage, Error> {
         .map_err(|_| Error::Protocol("watchtower sent invalid message"))
 }
 
-pub async fn register_coinswap_with_watchtower(
+pub async fn register_coinswap_with_watchtowers(
     contracts_to_watch: Vec<ContractInfo>,
 ) -> Result<(), Error> {
     //TODO add support for registering with multiple watchtowers concurrently
