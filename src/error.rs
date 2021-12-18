@@ -1,8 +1,6 @@
 use std::error;
 use std::io;
 
-use bitcoincore_rpc;
-
 // error enum for the whole project
 // try to make functions return this
 #[derive(Debug)]

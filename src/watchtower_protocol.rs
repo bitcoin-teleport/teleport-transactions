@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::iter::FromIterator;
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::BufReader;
@@ -15,7 +14,6 @@ use tokio::time::sleep;
 use serde::{Deserialize, Serialize};
 
 use bitcoin::Txid;
-use bitcoincore_rpc;
 use bitcoincore_rpc::{json::GetBlockResult, Client, RpcApi};
 
 use crate::error::Error;
@@ -60,7 +58,7 @@ pub enum WatchtowerToMakerMessage {
 //pub async fn
 
 #[tokio::main]
-pub async fn start_watchtower(rpc: Arc<Client>) {
+pub async fn start_watchtower(rpc: &Client) {
     match run(rpc).await {
         Ok(_o) => log::info!("watchtower ended without error"),
         Err(e) => log::info!("watchtower ended with err {:?}", e),
@@ -68,7 +66,7 @@ pub async fn start_watchtower(rpc: Arc<Client>) {
 }
 
 //TODO i think rpc doesnt need to be wrapped in Arc, because its not used in the spawned task
-async fn run(rpc: Arc<Client>) -> Result<(), Error> {
+async fn run(rpc: &Client) -> Result<(), Error> {
     //TODO port number in config file
     let port = 6103;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
@@ -112,7 +110,7 @@ async fn run(rpc: Arc<Client>) -> Result<(), Error> {
             //TODO make a const for this magic number of how often to poll, see similar
             // comment in maker_protocol.rs
             _ = sleep(Duration::from_secs(10)) => {
-                let r = check_for_watched_contract_txes(&rpc, &watched_contracts,
+                let r = check_for_broadcasted_contract_txes(&rpc, &watched_contracts,
                     &mut last_checked_block_height);
                 accepting_clients = r.is_ok();
                 log::info!("Timeout Branch, Accepting Clients @ {}", port);
@@ -126,7 +124,6 @@ async fn run(rpc: Arc<Client>) -> Result<(), Error> {
         }
 
         log::info!("<=== [{}] | Accepted Connection From", addr.port());
-        let _client_rpc = Arc::clone(&rpc);
         let server_loop_err_comms_tx = server_loop_err_comms_tx.clone();
         let watched_txes_comms_tx = watched_txes_comms_tx.clone();
 
@@ -239,11 +236,11 @@ enum TxidListType {
     FromBlock(GetBlockResult),
 }
 
-fn check_for_watched_contract_txes(
-    rpc: &Arc<Client>,
-    all_contracts_to_watch: &Vec<Vec<ContractInfo>>,
+pub fn check_for_broadcasted_contract_txes(
+    rpc: &Client,
+    all_contracts_to_watch: &[Vec<ContractInfo>],
     last_checked_block_height: &mut Option<u64>,
-) -> Result<(), bitcoincore_rpc::Error> {
+) -> Result<bool, bitcoincore_rpc::Error> {
     let mut network_txids = Vec::<TxidListType>::new();
 
     let mempool_txids = rpc.get_raw_mempool()?;
@@ -277,6 +274,7 @@ fn check_for_watched_contract_txes(
     }
     *last_checked_block_height = Some(blockchain_tip_height);
 
+    let mut contract_broadcasted = false;
     for txid_list_type in network_txids {
         let txid_list = match txid_list_type {
             TxidListType::FromMempool(txids) => {
@@ -305,7 +303,10 @@ fn check_for_watched_contract_txes(
                 "contract_txids_on_network = {:?}",
                 contract_txids_on_network
             );
-            if contract_txids_on_network.len() == 0
+            if !contract_txids_on_network.is_empty() {
+                contract_broadcasted = true;
+            }
+            if contract_txids_on_network.is_empty()
                 || contract_txids_on_network.len() == contracts_to_watch.len()
             {
                 continue;
@@ -334,5 +335,5 @@ fn check_for_watched_contract_txes(
         }
     }
 
-    Ok(())
+    Ok(contract_broadcasted)
 }

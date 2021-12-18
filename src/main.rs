@@ -180,7 +180,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     println!("total balance = {}", balance);
 
     let incomplete_coinswaps = wallet.find_incomplete_coinswaps(&rpc).unwrap();
-    if incomplete_coinswaps.len() > 0 {
+    if !incomplete_coinswaps.is_empty() {
         println!("= incomplete coinswaps =");
         for (hashvalue, (utxo_incoming_swapcoins, utxo_outgoing_swapcoins)) in incomplete_coinswaps
         {
@@ -235,7 +235,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
 
     let (_incoming_contract_utxos, mut outgoing_contract_utxos) =
         wallet.find_live_contract_unspents(&rpc).unwrap();
-    if outgoing_contract_utxos.len() > 0 {
+    if !outgoing_contract_utxos.is_empty() {
         outgoing_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
         println!("= live timelocked contracts =");
         println!(
@@ -400,13 +400,12 @@ fn run_watchtower() {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::trace!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::info!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
 
-    let rpc_ptr = Arc::new(rpc);
-    watchtower_protocol::start_watchtower(rpc_ptr);
+    watchtower_protocol::start_watchtower(&rpc);
 }
 
 #[derive(Debug, StructOpt)]
@@ -523,7 +522,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::TestWatchtowerClient {
             mut contract_transactions_hex,
         } => {
-            if contract_transactions_hex.len() == 0 {
+            if contract_transactions_hex.is_empty() {
                 // https://bitcoin.stackexchange.com/questions/68811/what-is-the-absolute-smallest-size-of-the-data-bytes-that-a-blockchain-transac
                 contract_transactions_hex = vec![String::from("0200000000010100000000000000000000000000000000000000000000000000000000000000000000000000fdffffff010100000000000000160014ffffffffffffffffffffffffffffffffffffffff022102000000000000000000000000000000000000000000000000000000000000000147304402207777777777777777777777777777777777777777777777777777777777777777022055555555555555555555555555555555555555555555555555555555555555550100000000")];
             }

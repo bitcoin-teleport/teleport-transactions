@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::iter::once;
 use std::time::Duration;
 
 use tokio::io::BufReader;
@@ -43,6 +44,9 @@ use crate::offerbook_sync::{sync_offerbook, OfferAddress};
 use crate::wallet_sync::{
     generate_keypair, CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
 };
+
+use crate::watchtower_client::ContractInfo;
+use crate::watchtower_protocol::check_for_broadcasted_contract_txes;
 
 #[tokio::main]
 pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
@@ -141,13 +145,20 @@ async fn send_coinswap(
             .iter()
             .map(|tx| tx.txid())
             .collect::<Vec<Txid>>(),
+        &[],
+        &mut None,
     )
-    .await?;
+    .await?
+    .unwrap();
+    //unwrap the option without checking for Option::None because we passed no contract txes
+    //to watch and therefore they cant be broadcast
 
     let mut active_maker_addresses = Vec::<String>::new();
     let mut previous_maker: Option<OfferAddress> = None;
     let mut watchonly_swapcoins = Vec::<Vec<WatchOnlySwapCoin>>::new();
     let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
+
+    let mut last_checked_block_height: Option<u64> = None;
 
     for maker_index in 0..maker_count {
         let maker = maker_offers_addresses.pop().unwrap();
@@ -286,7 +297,7 @@ async fn send_coinswap(
         active_maker_addresses.push(maker.address.clone());
 
         log::info!("Waiting for funding transaction confirmations",);
-        let (next_funding_txes, next_funding_tx_merkleproofs) = wait_for_funding_tx_confirmation(
+        let wait_for_confirm_result = wait_for_funding_tx_confirmation(
             rpc,
             &maker_sign_sender_and_receiver_contracts
                 .senders_contract_txes_info
@@ -297,8 +308,33 @@ async fn send_coinswap(
                         .txid
                 })
                 .collect::<Vec<Txid>>(),
+            &watchonly_swapcoins
+                .iter()
+                .map(|watchonly_swapcoin_list| {
+                    watchonly_swapcoin_list
+                        .iter()
+                        .map(|watchonly_swapcoin| watchonly_swapcoin.contract_tx.clone())
+                        .collect::<Vec<Transaction>>()
+                })
+                .chain(once(
+                    outgoing_swapcoins
+                        .iter()
+                        .map(|osc| osc.contract_tx.clone())
+                        .collect::<Vec<Transaction>>(),
+                ))
+                .collect::<Vec<Vec<Transaction>>>(),
+            &mut last_checked_block_height,
         )
         .await?;
+        if wait_for_confirm_result.is_none() {
+            log::info!(concat!(
+                "Somebody deviated from the protocol by broadcasting one or more contract",
+                " transactions! Use main method `recover-from-incomplete-coinswap` to recover",
+                " coins"
+            ));
+            panic!("ending");
+        }
+        let (next_funding_txes, next_funding_tx_merkleproofs) = wait_for_confirm_result.unwrap();
         funding_txes = next_funding_txes;
         funding_tx_merkleproofs = next_funding_tx_merkleproofs;
 
@@ -658,10 +694,27 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
     Ok(maker_receiver_contract_sig.sigs)
 }
 
+//return a list of the transactions and merkleproofs if the funding txes confirmed
+//return None if any of the contract transactions were seen on the network
+// if it turns out i want to return data in the contract tx broadcast case, then maybe use an enum
 async fn wait_for_funding_tx_confirmation(
     rpc: &Client,
     funding_txids: &[Txid],
-) -> Result<(Vec<Transaction>, Vec<String>), Error> {
+    contract_txes_to_watch: &[Vec<Transaction>],
+    last_checked_block_height: &mut Option<u64>,
+) -> Result<Option<(Vec<Transaction>, Vec<String>)>, Error> {
+    let contract_infos_to_watch = contract_txes_to_watch
+        .iter()
+        .map(|contract_txes| {
+            contract_txes
+                .iter()
+                .map(|contract_tx| ContractInfo {
+                    contract_tx: contract_tx.clone(),
+                })
+                .collect::<Vec<ContractInfo>>()
+        })
+        .collect::<Vec<Vec<ContractInfo>>>();
+
     let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
     let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
     loop {
@@ -682,27 +735,37 @@ async fn wait_for_funding_tx_confirmation(
             }
         }
         if txid_tx_map.len() == funding_txids.len() {
-            break;
+            log::info!("Funding Transaction confirmed");
+
+            let txes = funding_txids
+                .iter()
+                .map(|txid| txid_tx_map.get(txid).unwrap().clone())
+                .collect::<Vec<Transaction>>();
+            let merkleproofs = funding_txids
+                .iter()
+                .map(|&txid| {
+                    rpc.get_tx_out_proof(&[txid], Some(&txid_blockhash_map.get(&txid).unwrap()))
+                        .map(|gettxoutproof_result| gettxoutproof_result.to_hex())
+                })
+                .collect::<Result<Vec<String>, bitcoincore_rpc::Error>>()?;
+            return Ok(Some((txes, merkleproofs)));
         }
+        if !contract_infos_to_watch.is_empty() {
+            let contracts_broadcasted = check_for_broadcasted_contract_txes(
+                rpc,
+                &contract_infos_to_watch,
+                last_checked_block_height,
+            )?;
+            if contracts_broadcasted {
+                log::info!("Contract transactions were broadcasted! Aborting");
+                return Ok(None);
+            }
+        }
+
         sleep(Duration::from_millis(1000)).await;
         #[cfg(test)]
         crate::test::generate_1_block(&get_bitcoin_rpc().unwrap());
     }
-
-    log::info!("Funding Transaction confirmed");
-
-    let txes = funding_txids
-        .iter()
-        .map(|txid| txid_tx_map.get(txid).unwrap().clone())
-        .collect::<Vec<Transaction>>();
-    let merkleproofs = funding_txids
-        .iter()
-        .map(|&txid| {
-            rpc.get_tx_out_proof(&[txid], Some(&txid_blockhash_map.get(&txid).unwrap()))
-                .map(|gettxoutproof_result| gettxoutproof_result.to_hex())
-        })
-        .collect::<Result<Vec<String>, bitcoincore_rpc::Error>>()?;
-    Ok((txes, merkleproofs))
 }
 
 fn check_and_apply_maker_private_keys<S: SwapCoin>(
