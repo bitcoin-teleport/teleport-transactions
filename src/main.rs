@@ -400,7 +400,7 @@ fn run_watchtower() {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
-            log::info!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
@@ -472,7 +472,7 @@ fn setup_logger() {
     INIT.call_once(|| {
         env_logger::Builder::from_env(
             env_logger::Env::default()
-                .default_filter_or("teleport=info")
+                .default_filter_or("teleport=info,main=info")
                 .default_write_style_or("always"),
         )
         .init();
