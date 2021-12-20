@@ -763,7 +763,7 @@ impl Wallet {
 
         let contract_scriptpubkeys_outgoing_swapcoins =
             self.create_contract_scriptpubkey_swapcoin_hashmap();
-        let all_unspents = rpc.list_unspent(None, None, None, None, None)?;
+        let all_unspents = rpc.list_unspent(Some(0), Some(9999999), None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
             .filter(|u| {
@@ -787,7 +787,7 @@ impl Wallet {
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
         Ok(rpc
-            .list_unspent(None, None, None, None, None)?
+            .list_unspent(Some(0), Some(9999999), None, None, None)?
             .iter()
             .filter(|u| {
                 self.is_utxo_ours_and_spendable(u, &contract_scriptpubkeys_outgoing_swapcoins)
@@ -838,7 +838,7 @@ impl Wallet {
             }
             Some(swapcoin_hashvalue)
         };
-        for utxo in rpc.list_unspent(None, None, None, None, None)? {
+        for utxo in rpc.list_unspent(Some(0), Some(9999999), None, None, None)? {
             if utxo.descriptor.is_none() {
                 continue;
             }
@@ -904,7 +904,7 @@ impl Wallet {
 
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
-        let listunspent = rpc.list_unspent(None, None, None, None, None)?;
+        let listunspent = rpc.list_unspent(Some(0), Some(9999999), None, None, None)?;
 
         let (incoming_swap_coins_utxos, outgoing_swap_coins_utxos): (Vec<_>, Vec<_>) = listunspent
             .iter()
