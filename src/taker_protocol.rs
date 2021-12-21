@@ -57,18 +57,18 @@ pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet) -> Result<(), Error> {
-    let mut offers_addresses = sync_offerbook().await;
+    let offers_addresses = sync_offerbook().await;
     log::info!("<=== Got Offers");
     log::debug!("Offers : {:#?}", offers_addresses);
 
-    send_coinswap(rpc, wallet, &mut offers_addresses).await?;
+    send_coinswap(rpc, wallet, &offers_addresses).await?;
     Ok(())
 }
 
 async fn send_coinswap(
     rpc: &Client,
     wallet: &mut Wallet,
-    maker_offers_addresses: &mut Vec<OfferAddress>,
+    all_maker_offers_addresses: &Vec<OfferAddress>,
 ) -> Result<(), Error> {
     let amount = 500000;
     let my_tx_count: u32 = 3;
@@ -81,10 +81,10 @@ async fn send_coinswap(
 
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count;
 
+    let mut maker_offers_addresses = all_maker_offers_addresses.clone();
+
     let first_maker = maker_offers_addresses.last().unwrap();
     let last_maker = maker_offers_addresses.first().unwrap().clone();
-    let first_maker_port = first_maker.address.split(":").collect::<Vec<&str>>()[1];
-    let last_maker_port = last_maker.address.split(":").collect::<Vec<&str>>()[1];
 
     let (
         first_maker_multisig_pubkeys,
@@ -109,8 +109,8 @@ async fn send_coinswap(
     log::debug!("My Timelock Keys: {:#?}", my_timelock_pubkeys);
 
     log::info!(
-        "===> [{}] | Sending SignSendersContractTx",
-        first_maker_port
+        "===> Sending SignSendersContractTx to {}",
+        first_maker.address
     );
     let first_maker_senders_contract_sigs = request_senders_contract_tx_signatures(
         &first_maker.address,
@@ -161,8 +161,7 @@ async fn send_coinswap(
     let mut last_checked_block_height: Option<u64> = None;
 
     for maker_index in 0..maker_count {
-        let maker = maker_offers_addresses.pop().unwrap();
-        let current_maker_port = maker.address.split(":").collect::<Vec<&str>>()[1];
+        let current_maker = maker_offers_addresses.pop().unwrap();
         let maker_refund_locktime =
             REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
         let is_taker_next_peer = maker_index == maker_count - 1;
@@ -192,11 +191,10 @@ async fn send_coinswap(
             )
         };
 
-        let mut socket = TcpStream::connect(maker.address.clone()).await?;
+        let mut socket = TcpStream::connect(current_maker.address.clone()).await?;
         let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
-        log::info!("===> [{}] | Sending ProofOfFunding", current_maker_port);
-
+        log::info!("===> Sending ProofOfFunding to {}", current_maker.address);
         let (maker_sign_sender_and_receiver_contracts, next_swap_contract_redeemscripts) =
             send_proof_of_funding_and_get_contract_txes(
                 &mut socket_reader,
@@ -214,6 +212,10 @@ async fn send_coinswap(
                 hashvalue,
             )
             .await?;
+        log::info!(
+            "<=== Recieved SignSendersAndReceiversContractTxes from {}",
+            current_maker.address
+        );
 
         let receivers_sigs = if is_taker_previous_peer {
             log::info!("Taker is previous peer. Signing Receivers Contract Txs",);
@@ -224,11 +226,9 @@ async fn send_coinswap(
         } else {
             assert!(previous_maker.is_some());
             let previous_maker_addr = previous_maker.unwrap().address;
-            let prev_maker_port = previous_maker_addr.split(":").collect::<Vec<&str>>()[1];
             log::info!(
-                "===> [{}] | {} is previous peer. Sending SignReceiversContractTx",
-                prev_maker_port,
-                prev_maker_port
+                "===> Sending SignReceiversContractTx, previous maker is {}",
+                previous_maker_addr,
             );
             request_receivers_contract_tx_signatures(
                 &previous_maker_addr,
@@ -245,16 +245,9 @@ async fn send_coinswap(
                 &maker_sign_sender_and_receiver_contracts,
             )?
         } else {
-            let next_maker_port = maker_offers_addresses
-                .last()
-                .unwrap()
-                .address
-                .split(":")
-                .collect::<Vec<&str>>()[1];
             log::info!(
-                "===> [{}] | {} is next peer. Sending SignSendersContractTx",
-                next_maker_port,
-                next_maker_port
+                "===> Sending SignSendersContractTx, next maker is {}",
+                maker_offers_addresses.last().unwrap().address
             );
             let next_swapcoins = create_watch_only_swap_coins(
                 rpc,
@@ -282,8 +275,8 @@ async fn send_coinswap(
         };
 
         log::info!(
-            "===> [{}] | Sending SendersAndReceiversContractSigs",
-            current_maker_port
+            "===> Sending SendersAndReceiversContractSigs to {}",
+            current_maker.address
         );
 
         send_message(
@@ -294,7 +287,7 @@ async fn send_coinswap(
             }),
         )
         .await?;
-        active_maker_addresses.push(maker.address.clone());
+        active_maker_addresses.push(current_maker.address.clone());
 
         log::info!("Waiting for funding transaction confirmations",);
         let wait_for_confirm_result = wait_for_funding_tx_confirmation(
@@ -352,12 +345,12 @@ async fn send_coinswap(
         }
         this_maker_multisig_privkeys = next_peer_multisig_keys_or_nonces;
         this_maker_hashlock_privkeys = next_peer_hashlock_keys_or_nonces;
-        previous_maker = Some(maker);
+        previous_maker = Some(current_maker);
     }
 
     log::info!(
-        "===> [{}] | Sending SignReceiversContractTx",
-        last_maker_port
+        "===> Sending SignReceiversContractTx to {}",
+        last_maker.address
     );
     let last_receiver_contract_sig = request_receivers_contract_tx_signatures(
         &last_maker.address,
@@ -384,8 +377,6 @@ async fn send_coinswap(
         let is_taker_previous_peer = index == 0;
         let is_taker_next_peer = (index as u16) == maker_count - 1;
 
-        let port = maker_address.split(":").collect::<Vec<&str>>()[1];
-
         let senders_multisig_redeemscripts = if is_taker_previous_peer {
             get_multisig_redeemscripts_from_swapcoins(&outgoing_swapcoins)
         } else {
@@ -401,7 +392,7 @@ async fn send_coinswap(
         let mut socket = TcpStream::connect(maker_address).await?;
         let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
-        log::info!("===> [{}] | Sending HashPreimage", port);
+        log::info!("===> Sending HashPreimage to {}", maker_address);
         let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
             &mut socket_reader,
             &mut socket_writer,
@@ -410,6 +401,7 @@ async fn send_coinswap(
             preimage,
         )
         .await?;
+        log::info!("<=== Received PrivateKeyHandover from {}", maker_address);
 
         let privkeys_reply = if is_taker_previous_peer {
             outgoing_swapcoins
@@ -439,7 +431,7 @@ async fn send_coinswap(
             ret
         }?;
 
-        log::info!("===> [{}] | Sending PrivateKeyHandover", port);
+        log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
         send_message(
             &mut socket_writer,
             TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
@@ -642,8 +634,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
         //TODO now go back to the start and try with another maker, in a loop
     }
 
-    let port = maker_address.split(":").collect::<Vec<&str>>()[1];
-    log::info!("<=== [{}] | Received SendersContractSig", port);
+    log::info!("<=== Received SendersContractSig from {}", maker_address);
     Ok(maker_senders_contract_sig.sigs)
 }
 
@@ -689,8 +680,7 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
         return Err(Error::Protocol("invalid signature from maker"));
     }
 
-    let port = maker_address.split(":").collect::<Vec<&str>>()[1];
-    log::info!("<=== [{}] | Received ReceiversContractSig", port);
+    log::info!("<=== Received ReceiversContractSig from {}", maker_address);
     Ok(maker_receiver_contract_sig.sigs)
 }
 
@@ -916,14 +906,6 @@ async fn send_proof_of_funding_and_get_contract_txes(
             )
         })
         .collect::<Vec<Script>>();
-
-    let peer_addr = socket_writer.as_ref().peer_addr().unwrap().to_string();
-    let peer_port = peer_addr.split(":").collect::<Vec<&str>>()[1];
-
-    log::info!(
-        "<=== [{}] | Recieved SignSendersAndReceiversContractTxes",
-        peer_port
-    );
     Ok((
         maker_sign_sender_and_receiver_contracts,
         next_swap_contract_redeemscripts,
@@ -1135,10 +1117,5 @@ async fn send_hash_preimage_and_get_private_keys(
     {
         return Err(Error::Protocol("wrong number of private keys from maker"));
     }
-
-    let peer_addr = socket_writer.as_ref().peer_addr().unwrap().to_string();
-    let peer_port = peer_addr.split(":").collect::<Vec<&str>>()[1];
-
-    log::info!("<=== [{}] | Received PrivateKeyHandover", peer_port);
     Ok(maker_private_key_handover)
 }
