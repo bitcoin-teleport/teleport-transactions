@@ -8,7 +8,7 @@ use bitcoin::Transaction;
 
 use crate::error::Error;
 use crate::watchtower_protocol::{
-    MakerToWatchtowerMessage, WatchContractTxes, WatchtowerToMakerMessage,
+    MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -18,6 +18,7 @@ pub struct ContractInfo {
 
 #[tokio::main]
 pub async fn test_watchtower_client(contracts_to_watch: Vec<ContractInfo>) {
+    ping_watchtowers().await.unwrap();
     register_coinswap_with_watchtowers(contracts_to_watch)
         .await
         .unwrap();
@@ -31,6 +32,28 @@ fn parse_message(line: &str) -> Result<WatchtowerToMakerMessage, Error> {
 pub async fn register_coinswap_with_watchtowers(
     contracts_to_watch: Vec<ContractInfo>,
 ) -> Result<(), Error> {
+    send_message_to_watchtowers(&MakerToWatchtowerMessage::WatchContractTxes(
+        WatchContractTxes {
+            protocol_version_min: 0,
+            protocol_version_max: 0,
+            contracts_to_watch,
+        },
+    ))
+    .await?;
+    log::info!("Successfully registered contract txes with watchtower");
+    Ok(())
+}
+
+pub async fn ping_watchtowers() -> Result<(), Error> {
+    log::debug!("pinging watchtowers");
+    send_message_to_watchtowers(&MakerToWatchtowerMessage::Ping(Ping {
+        protocol_version_min: 0,
+        protocol_version_max: 0,
+    }))
+    .await
+}
+
+async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Result<(), Error> {
     //TODO add support for registering with multiple watchtowers concurrently
     //TODO add timeouts to deal with indefinite hangs
 
@@ -40,14 +63,7 @@ pub async fn register_coinswap_with_watchtowers(
     let (socket_reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(socket_reader);
 
-    let mut message_packet = serde_json::to_vec(&MakerToWatchtowerMessage::WatchContractTxes(
-        WatchContractTxes {
-            protocol_version_min: 0,
-            protocol_version_max: 0,
-            contracts_to_watch,
-        },
-    ))
-    .unwrap();
+    let mut message_packet = serde_json::to_vec(message).unwrap();
     message_packet.push(b'\n');
     socket_writer.write_all(&message_packet).await?;
 
@@ -74,7 +90,6 @@ pub async fn register_coinswap_with_watchtowers(
         log::trace!(target: "watchtower_client", "wrong protocol message2");
         return Err(Error::Protocol("wrong protocol message2 from watchtower"));
     };
-    log::info!("Successfully registered contract txes with watchtower");
 
     Ok(())
 }

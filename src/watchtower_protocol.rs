@@ -34,8 +34,15 @@ pub struct WatchContractTxes {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Ping {
+    pub protocol_version_min: u32,
+    pub protocol_version_max: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "lowercase")]
 pub enum MakerToWatchtowerMessage {
+    Ping(Ping),
     WatchContractTxes(WatchContractTxes),
 }
 
@@ -216,14 +223,15 @@ async fn handle_message(
         Err(_e) => return Err(Error::Protocol("message parsing error")),
     };
     log::debug!("request = {:?}", request);
-
-    let MakerToWatchtowerMessage::WatchContractTxes(message) = request;
-
-    watched_txes_comms_tx
-        .send(message.contracts_to_watch)
-        .await
-        .unwrap();
-
+    match request {
+        MakerToWatchtowerMessage::Ping(_ping) => {}
+        MakerToWatchtowerMessage::WatchContractTxes(watch_contract_txes_message) => {
+            watched_txes_comms_tx
+                .send(watch_contract_txes_message.contracts_to_watch)
+                .await
+                .unwrap(); //TODO can someone crash the watchtower by maxing out this list?
+        }
+    }
     Ok(())
 }
 

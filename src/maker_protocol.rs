@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::io::BufReader;
 use tokio::net::tcp::WriteHalf;
@@ -28,7 +28,9 @@ use crate::messages::{
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
 use crate::wallet_sync::{CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
-use crate::watchtower_client::{register_coinswap_with_watchtowers, ContractInfo};
+use crate::watchtower_client::{
+    ping_watchtowers, register_coinswap_with_watchtowers, ContractInfo,
+};
 
 // A structure denoting expectation of type of taker message.
 // Used in the [ConnectionState] structure.
@@ -63,12 +65,16 @@ struct ConnectionState {
 }
 
 async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result<(), Error> {
+    log::info!("Pinging watchtowers. . .");
+    ping_watchtowers().await?;
+
     //TODO port number in config file
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     log::info!("Listening On Port {}", port);
 
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
+    let mut last_watchtowers_ping = Instant::now();
     loop {
         let (mut socket, addr) = select! {
             new_client = listener.accept() => new_client?,
@@ -85,11 +91,21 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 }
                 break Err(client_err.unwrap());
             },
-            //TODO make a const for this magic number of how often to poll the rpc
-            _ = sleep(Duration::from_secs(60)) => {
-                let r = rpc.get_best_block_hash();
-                accepting_clients = r.is_ok();
-                log::info!("Timeout Branch, Accepting Clients @ {}", port);
+            //TODO make a const for this magic number of how often to ping the rpc
+            _ = sleep(Duration::from_secs(10)) => {
+                let rpc_ping_success = rpc.get_best_block_hash().is_ok();
+                let watchtowers_ping_interval = Duration::from_secs(300); //TODO put in config file?
+                let (watchtowers_ping_success, debug_msg) = if Instant::now()
+                        .saturating_duration_since(last_watchtowers_ping)
+                        > watchtowers_ping_interval {
+                    last_watchtowers_ping = Instant::now();
+                    let w = ping_watchtowers().await;
+                    (w.is_ok(), format!(", watchtowers = {}", w.is_ok()))
+                } else {
+                    (true, String::from(""))
+                };
+                log::debug!("Ping: RPC = {}{}", rpc_ping_success, debug_msg);
+                accepting_clients = rpc_ping_success && watchtowers_ping_success;
                 continue;
             },
         };
