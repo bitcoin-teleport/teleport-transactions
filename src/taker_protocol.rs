@@ -34,7 +34,7 @@ use crate::messages::{
     ConfirmedCoinSwapTxInfo, HashPreimage, MakerToTakerMessage, NextCoinSwapTxInfo, Preimage,
     PrivateKeyHandover, ProofOfFunding, ReceiversContractTxInfo, SenderContractTxNoncesInfo,
     SendersAndReceiversContractSigs, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
-    SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage,
+    SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage, PREIMAGE_LEN,
 };
 
 #[cfg(test)]
@@ -75,7 +75,7 @@ async fn send_coinswap(
     let maker_tx_count: u32 = 3;
     let maker_count: u16 = 2;
 
-    let mut preimage = [0u8; 32];
+    let mut preimage = [0u8; PREIMAGE_LEN];
     OsRng.fill_bytes(&mut preimage);
     let hashvalue = Hash160::hash(&preimage);
 
