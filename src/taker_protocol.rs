@@ -83,16 +83,13 @@ async fn send_coinswap(
 
     let mut maker_offers_addresses = all_maker_offers_addresses.clone();
 
-    let first_maker = maker_offers_addresses.last().unwrap();
-    let last_maker = maker_offers_addresses.first().unwrap().clone();
-
+    let first_maker = maker_offers_addresses.pop().unwrap();
     let (
         first_maker_multisig_pubkeys,
         mut this_maker_multisig_privkeys,
         first_maker_hashlock_pubkeys,
         mut this_maker_hashlock_privkeys,
     ) = generate_maker_multisig_and_hashlock_keys(&first_maker.offer.tweakable_point, my_tx_count);
-
     let (my_funding_txes, mut outgoing_swapcoins, my_timelock_pubkeys) = wallet
         .initalize_coinswap(
             rpc,
@@ -103,7 +100,6 @@ async fn send_coinswap(
             first_swap_locktime,
         )
         .unwrap();
-
     log::debug!("My Funding Tx:  {:#?}", my_funding_txes);
     log::debug!("Outgoing SwapCoins: {:#?}", outgoing_swapcoins);
     log::debug!("My Timelock Keys: {:#?}", my_timelock_pubkeys);
@@ -126,18 +122,15 @@ async fn send_coinswap(
         .iter()
         .zip(outgoing_swapcoins.iter_mut())
         .for_each(|(sig, outgoing_swapcoin)| outgoing_swapcoin.others_contract_sig = Some(*sig));
-
     for outgoing_swapcoin in &outgoing_swapcoins {
         wallet.add_outgoing_swapcoin(outgoing_swapcoin.clone());
     }
     wallet.update_swap_coins_list().unwrap();
-
     for my_funding_tx in my_funding_txes.iter() {
         let txid = rpc.send_raw_transaction(my_funding_tx)?;
         log::info!("Broadcasting My Funding Tx: {}", txid);
         assert_eq!(txid, my_funding_tx.txid());
     }
-
     log::info!("Waiting for funding Tx to confirm");
     let (mut funding_txes, mut funding_tx_merkleproofs) = wait_for_funding_tx_confirmation(
         rpc,
@@ -161,12 +154,16 @@ async fn send_coinswap(
     let mut last_checked_block_height: Option<u64> = None;
 
     for maker_index in 0..maker_count {
-        let current_maker = maker_offers_addresses.pop().unwrap();
-        let maker_refund_locktime =
-            REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
         let is_taker_next_peer = maker_index == maker_count - 1;
         let is_taker_previous_peer = maker_index == 0;
 
+        let current_maker = if is_taker_previous_peer {
+            first_maker.clone()
+        } else {
+            maker_offers_addresses.pop().unwrap()
+        };
+        let maker_refund_locktime =
+            REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
         let (
             this_maker_multisig_redeemscripts,
             this_maker_contract_redeemscripts,
@@ -217,27 +214,6 @@ async fn send_coinswap(
             current_maker.address
         );
 
-        let receivers_sigs = if is_taker_previous_peer {
-            log::info!("Taker is previous peer. Signing Receivers Contract Txs",);
-            sign_receivers_contract_txes(
-                &maker_sign_sender_and_receiver_contracts.receivers_contract_txes,
-                &outgoing_swapcoins,
-            )?
-        } else {
-            assert!(previous_maker.is_some());
-            let previous_maker_addr = previous_maker.unwrap().address;
-            log::info!(
-                "===> Sending SignReceiversContractTx, previous maker is {}",
-                previous_maker_addr,
-            );
-            request_receivers_contract_tx_signatures(
-                &previous_maker_addr,
-                watchonly_swapcoins.last().unwrap(),
-                &maker_sign_sender_and_receiver_contracts.receivers_contract_txes,
-            )
-            .await?
-        };
-
         let senders_sigs = if is_taker_next_peer {
             log::info!("Taker is next peer. Signing Sender's Contract Txs",);
             sign_senders_contract_txes(
@@ -272,6 +248,33 @@ async fn send_coinswap(
             .await?;
             watchonly_swapcoins.push(next_swapcoins);
             sigs
+        };
+
+        let receivers_sigs = if is_taker_previous_peer {
+            log::info!("Taker is previous peer. Signing Receivers Contract Txs",);
+            sign_receivers_contract_txes(
+                &maker_sign_sender_and_receiver_contracts.receivers_contract_txes,
+                &outgoing_swapcoins,
+            )?
+        } else {
+            assert!(previous_maker.is_some());
+            let previous_maker_addr = previous_maker.unwrap().address;
+            log::info!(
+                "===> Sending SignReceiversContractTx, previous maker is {}",
+                previous_maker_addr,
+            );
+            let previous_maker_watchonly_swapcoins = if is_taker_next_peer {
+                watchonly_swapcoins.last().unwrap()
+            } else {
+                //if the next peer is a maker not a taker, then that maker's swapcoins are last
+                &watchonly_swapcoins[watchonly_swapcoins.len() - 2]
+            };
+            request_receivers_contract_tx_signatures(
+                &previous_maker_addr,
+                previous_maker_watchonly_swapcoins,
+                &maker_sign_sender_and_receiver_contracts.receivers_contract_txes,
+            )
+            .await?
         };
 
         log::info!(
@@ -348,6 +351,7 @@ async fn send_coinswap(
         previous_maker = Some(current_maker);
     }
 
+    let last_maker = previous_maker.unwrap();
     log::info!(
         "===> Sending SignReceiversContractTx to {}",
         last_maker.address
@@ -704,7 +708,6 @@ async fn wait_for_funding_tx_confirmation(
                 .collect::<Vec<ContractInfo>>()
         })
         .collect::<Vec<Vec<ContractInfo>>>();
-
     let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
     let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
     loop {
@@ -726,7 +729,6 @@ async fn wait_for_funding_tx_confirmation(
         }
         if txid_tx_map.len() == funding_txids.len() {
             log::info!("Funding Transaction confirmed");
-
             let txes = funding_txids
                 .iter()
                 .map(|txid| txid_tx_map.get(txid).unwrap().clone())
@@ -751,7 +753,6 @@ async fn wait_for_funding_tx_confirmation(
                 return Ok(None);
             }
         }
-
         sleep(Duration::from_millis(1000)).await;
         #[cfg(test)]
         crate::test::generate_1_block(&get_bitcoin_rpc().unwrap());
