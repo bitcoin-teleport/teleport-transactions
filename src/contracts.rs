@@ -47,6 +47,9 @@ pub trait SwapCoin {
     fn get_multisig_redeemscript(&self) -> Script;
     fn get_contract_tx(&self) -> Transaction;
     fn get_contract_redeemscript(&self) -> Script;
+    fn get_timelock_pubkey(&self) -> PublicKey;
+    fn get_hashlock_pubkey(&self) -> PublicKey;
+    fn get_hashvalue(&self) -> Hash160;
     fn get_funding_amount(&self) -> u64;
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
@@ -460,6 +463,35 @@ fn verify_contract_tx_sig(
     secp.verify(&sighash, sig, &pubkey.key).is_ok()
 }
 
+macro_rules! add_simple_swapcoin_get_functions {
+    () => {
+        //unwrap() here because previously checked that contract_redeemscript is good
+        fn get_timelock_pubkey(&self) -> PublicKey {
+            read_timelock_pubkey_from_contract(&self.contract_redeemscript).unwrap()
+        }
+
+        fn get_hashlock_pubkey(&self) -> PublicKey {
+            read_hashlock_pubkey_from_contract(&self.contract_redeemscript).unwrap()
+        }
+
+        fn get_hashvalue(&self) -> Hash160 {
+            read_hashvalue_from_contract(&self.contract_redeemscript).unwrap()
+        }
+
+        fn get_contract_tx(&self) -> Transaction {
+            self.contract_tx.clone()
+        }
+
+        fn get_contract_redeemscript(&self) -> Script {
+            self.contract_redeemscript.clone()
+        }
+
+        fn get_funding_amount(&self) -> u64 {
+            self.funding_amount
+        }
+    };
+}
+
 impl SwapCoin for IncomingSwapCoin {
     fn get_multisig_redeemscript(&self) -> Script {
         let secp = Secp256k1::new();
@@ -472,17 +504,7 @@ impl SwapCoin for IncomingSwapCoin {
         )
     }
 
-    fn get_contract_tx(&self) -> Transaction {
-        self.contract_tx.clone()
-    }
-
-    fn get_contract_redeemscript(&self) -> Script {
-        self.contract_redeemscript.clone()
-    }
-
-    fn get_funding_amount(&self) -> u64 {
-        self.funding_amount
-    }
+    add_simple_swapcoin_get_functions!();
 
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
         self.verify_contract_tx_sig(sig)
@@ -522,17 +544,7 @@ impl SwapCoin for OutgoingSwapCoin {
         )
     }
 
-    fn get_contract_tx(&self) -> Transaction {
-        self.contract_tx.clone()
-    }
-
-    fn get_contract_redeemscript(&self) -> Script {
-        self.contract_redeemscript.clone()
-    }
-
-    fn get_funding_amount(&self) -> u64 {
-        self.funding_amount
-    }
+    add_simple_swapcoin_get_functions!();
 
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
         self.verify_contract_tx_sig(sig)
@@ -599,17 +611,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         create_multisig_redeemscript(&self.sender_pubkey, &self.receiver_pubkey)
     }
 
-    fn get_contract_tx(&self) -> Transaction {
-        self.contract_tx.clone()
-    }
-
-    fn get_contract_redeemscript(&self) -> Script {
-        self.contract_redeemscript.clone()
-    }
-
-    fn get_funding_amount(&self) -> u64 {
-        self.funding_amount
-    }
+    add_simple_swapcoin_get_functions!();
 
     //potential confusion here:
     //verify sender sig uses the receiver_pubkey

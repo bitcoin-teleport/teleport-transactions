@@ -1337,8 +1337,8 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
-        locktime: u16, //returns: funding_txes, swapcoins, timelock_pubkeys
-    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Vec<PublicKey>), Error> {
+        locktime: u16, //returns: funding_txes, swapcoins
+    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>), Error> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
@@ -1351,7 +1351,6 @@ impl Wallet {
         //probably have an enum called something like SendAmount which can be
         // an integer but also can be Sweep
 
-        let mut timelock_pubkeys = Vec::<PublicKey>::new();
         let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
 
         for (
@@ -1385,7 +1384,6 @@ impl Wallet {
                 &contract_redeemscript,
             );
 
-            timelock_pubkeys.push(timelock_pubkey);
             outgoing_swapcoins.push(OutgoingSwapCoin::new(
                 my_multisig_privkey,
                 other_multisig_pubkey,
@@ -1396,7 +1394,7 @@ impl Wallet {
             ));
         }
 
-        Ok((my_funding_txes, outgoing_swapcoins, timelock_pubkeys))
+        Ok((my_funding_txes, outgoing_swapcoins))
     }
 }
 

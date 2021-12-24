@@ -90,7 +90,7 @@ async fn send_coinswap(
         first_maker_hashlock_pubkeys,
         mut this_maker_hashlock_privkeys,
     ) = generate_maker_multisig_and_hashlock_keys(&first_maker.offer.tweakable_point, my_tx_count);
-    let (my_funding_txes, mut outgoing_swapcoins, my_timelock_pubkeys) = wallet
+    let (my_funding_txes, mut outgoing_swapcoins) = wallet
         .initalize_coinswap(
             rpc,
             amount,
@@ -102,7 +102,6 @@ async fn send_coinswap(
         .unwrap();
     log::debug!("My Funding Tx:  {:#?}", my_funding_txes);
     log::debug!("Outgoing SwapCoins: {:#?}", outgoing_swapcoins);
-    log::debug!("My Timelock Keys: {:#?}", my_timelock_pubkeys);
 
     log::info!(
         "===> Sending SignSendersContractTx to {}",
@@ -113,8 +112,6 @@ async fn send_coinswap(
         &outgoing_swapcoins,
         &this_maker_multisig_privkeys,
         &this_maker_hashlock_privkeys,
-        &my_timelock_pubkeys,
-        hashvalue,
         first_swap_locktime,
     )
     .await?;
@@ -237,12 +234,6 @@ async fn send_coinswap(
                 &next_swapcoins,
                 &next_peer_multisig_keys_or_nonces,
                 &next_peer_hashlock_keys_or_nonces,
-                &maker_sign_sender_and_receiver_contracts
-                    .senders_contract_txes_info
-                    .iter()
-                    .map(|senders_contract_tx_info| senders_contract_tx_info.timelock_pubkey)
-                    .collect::<Vec<PublicKey>>(),
-                hashvalue,
                 maker_refund_locktime,
             )
             .await?;
@@ -581,8 +572,6 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
-    timelock_pubkeys: &[PublicKey],
-    hashvalue: Hash160,
     locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
     let mut socket = TcpStream::connect(maker_address).await?;
@@ -593,26 +582,22 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
             txes_info: izip!(
                 maker_multisig_nonces.iter(),
                 maker_hashlock_nonces.iter(),
-                timelock_pubkeys.iter(),
                 outgoing_swapcoins.iter()
             )
             .map(
-                |(
-                    &multisig_key_nonce,
-                    &hashlock_key_nonce,
-                    &timelock_pubkey,
-                    outgoing_swapcoin,
-                )| SenderContractTxNoncesInfo {
-                    multisig_key_nonce,
-                    hashlock_key_nonce,
-                    timelock_pubkey,
-                    senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
-                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    funding_input_value: outgoing_swapcoin.get_funding_amount(),
+                |(&multisig_key_nonce, &hashlock_key_nonce, outgoing_swapcoin)| {
+                    SenderContractTxNoncesInfo {
+                        multisig_key_nonce,
+                        hashlock_key_nonce,
+                        timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
+                        senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
+                        multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                        funding_input_value: outgoing_swapcoin.get_funding_amount(),
+                    }
                 },
             )
             .collect::<Vec<SenderContractTxNoncesInfo>>(),
-            hashvalue,
+            hashvalue: outgoing_swapcoins[0].get_hashvalue(),
             locktime,
         }),
     )

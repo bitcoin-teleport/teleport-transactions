@@ -533,23 +533,22 @@ fn handle_proof_of_funding(
     log::debug!("incoming amount = {}", incoming_amount);
     let amount = incoming_amount - coinswap_fees;
 
-    let (my_funding_txes, outgoing_swapcoins, timelock_pubkeys) =
-        wallet.write().unwrap().initalize_coinswap(
-            &rpc,
-            amount,
-            &proof
-                .next_coinswap_info
-                .iter()
-                .map(|nci| nci.next_coinswap_multisig_pubkey)
-                .collect::<Vec<PublicKey>>(),
-            &proof
-                .next_coinswap_info
-                .iter()
-                .map(|nci| nci.next_hashlock_pubkey)
-                .collect::<Vec<PublicKey>>(),
-            hashvalue,
-            proof.next_locktime,
-        )?;
+    let (my_funding_txes, outgoing_swapcoins) = wallet.write().unwrap().initalize_coinswap(
+        &rpc,
+        amount,
+        &proof
+            .next_coinswap_info
+            .iter()
+            .map(|nci| nci.next_coinswap_multisig_pubkey)
+            .collect::<Vec<PublicKey>>(),
+        &proof
+            .next_coinswap_info
+            .iter()
+            .map(|nci| nci.next_hashlock_pubkey)
+            .collect::<Vec<PublicKey>>(),
+        hashvalue,
+        proof.next_locktime,
+    )?;
 
     log::debug!("My Funding Transactions = {:#?}", my_funding_txes);
 
@@ -575,15 +574,12 @@ fn handle_proof_of_funding(
                     .as_ref()
                     .unwrap()
                     .iter()
-                    .zip(timelock_pubkeys.iter())
-                    .map(
-                        |(outgoing_swapcoin, &timelock_pubkey)| SenderContractTxInfo {
-                            contract_tx: outgoing_swapcoin.contract_tx.clone(),
-                            timelock_pubkey,
-                            multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                            funding_amount: outgoing_swapcoin.funding_amount,
-                        },
-                    )
+                    .map(|outgoing_swapcoin| SenderContractTxInfo {
+                        contract_tx: outgoing_swapcoin.contract_tx.clone(),
+                        timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
+                        multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                        funding_amount: outgoing_swapcoin.funding_amount,
+                    })
                     .collect::<Vec<SenderContractTxInfo>>(),
             },
         ),
