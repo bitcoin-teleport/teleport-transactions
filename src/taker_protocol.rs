@@ -81,9 +81,11 @@ async fn send_coinswap(
 
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count;
 
-    let mut maker_offers_addresses = all_maker_offers_addresses.clone();
+    let mut maker_offers_addresses = all_maker_offers_addresses
+        .iter()
+        .collect::<Vec<&OfferAddress>>();
 
-    let first_maker = maker_offers_addresses.pop().unwrap();
+    let first_maker = choose_next_maker(&mut maker_offers_addresses).unwrap();
     let (
         first_maker_multisig_pubkeys,
         mut this_maker_multisig_privkeys,
@@ -144,7 +146,9 @@ async fn send_coinswap(
     //to watch and therefore they cant be broadcast
 
     let mut active_maker_addresses = Vec::<String>::new();
-    let mut previous_maker: Option<OfferAddress> = None;
+    let mut next_maker = first_maker;
+    let mut previous_maker: Option<&OfferAddress> = None;
+
     let mut watchonly_swapcoins = Vec::<Vec<WatchOnlySwapCoin>>::new();
     let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
 
@@ -154,11 +158,6 @@ async fn send_coinswap(
         let is_taker_next_peer = maker_index == maker_count - 1;
         let is_taker_previous_peer = maker_index == 0;
 
-        let current_maker = if is_taker_previous_peer {
-            first_maker.clone()
-        } else {
-            maker_offers_addresses.pop().unwrap()
-        };
         let maker_refund_locktime =
             REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
         let (
@@ -171,6 +170,7 @@ async fn send_coinswap(
             get_swapcoin_multisig_contract_redeemscripts_txes(watchonly_swapcoins.last().unwrap())
         };
 
+        let current_maker = next_maker;
         let (
             next_peer_multisig_pubkeys,
             next_peer_multisig_keys_or_nonces,
@@ -179,8 +179,11 @@ async fn send_coinswap(
         ) = if is_taker_next_peer {
             generate_my_multisig_and_hashlock_keys(maker_tx_count)
         } else {
+            next_maker = choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
+            //next_maker is only ever used when the next peer is a maker not a taker
+            //so if its ever used when is_taker_next_peer == true, then thats a bug
             generate_maker_multisig_and_hashlock_keys(
-                &maker_offers_addresses.last().unwrap().offer.tweakable_point,
+                &next_maker.offer.tweakable_point,
                 maker_tx_count,
             )
         };
@@ -220,7 +223,7 @@ async fn send_coinswap(
         } else {
             log::info!(
                 "===> Sending SignSendersContractTx, next maker is {}",
-                maker_offers_addresses.last().unwrap().address
+                next_maker.address
             );
             let next_swapcoins = create_watch_only_swap_coins(
                 rpc,
@@ -230,7 +233,7 @@ async fn send_coinswap(
                 &next_swap_contract_redeemscripts,
             )?;
             let sigs = request_senders_contract_tx_signatures(
-                &maker_offers_addresses.last().unwrap().address,
+                &next_maker.address,
                 &next_swapcoins,
                 &next_peer_multisig_keys_or_nonces,
                 &next_peer_hashlock_keys_or_nonces,
@@ -249,7 +252,7 @@ async fn send_coinswap(
             )?
         } else {
             assert!(previous_maker.is_some());
-            let previous_maker_addr = previous_maker.unwrap().address;
+            let previous_maker_addr = &previous_maker.unwrap().address;
             log::info!(
                 "===> Sending SignReceiversContractTx, previous maker is {}",
                 previous_maker_addr,
@@ -465,6 +468,14 @@ async fn send_coinswap(
 
     log::info!("Successfully Completed Coinswap");
     Ok(())
+}
+
+fn choose_next_maker<'a>(
+    maker_offers_addresses: &mut Vec<&'a OfferAddress>,
+) -> Option<&'a OfferAddress> {
+    let m = maker_offers_addresses.pop();
+    log::debug!("next maker = {:?}", m);
+    m
 }
 
 async fn send_message(
