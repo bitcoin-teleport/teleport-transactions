@@ -299,7 +299,7 @@ fn print_receive_invoice(wallet_file_name: &PathBuf) {
     println!("{}", addr);
 }
 
-fn run_maker(wallet_file_name: &PathBuf, port: u16) {
+fn run_maker(wallet_file_name: &PathBuf, port: u16, special_behavior: Option<String>) {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
@@ -318,7 +318,18 @@ fn run_maker(wallet_file_name: &PathBuf, port: u16) {
 
     let rpc_ptr = Arc::new(rpc);
     let wallet_ptr = Arc::new(RwLock::new(wallet));
-    maker_protocol::start_maker(rpc_ptr, wallet_ptr, port);
+    let config = maker_protocol::MakerConfig {
+        port,
+        rpc_ping_interval: 30,
+        watchtower_ping_interval: 300,
+        maker_behavior: match special_behavior.unwrap_or(String::new()).as_str() {
+            "closeonsignsenderscontracttx" => {
+                maker_protocol::MakerBehavior::CloseOnSignSendersContractTx
+            }
+            _ => maker_protocol::MakerBehavior::Normal,
+        },
+    };
+    maker_protocol::start_maker(rpc_ptr, wallet_ptr, config);
 }
 
 fn run_taker(wallet_file_name: &PathBuf) {
@@ -408,6 +419,20 @@ fn run_watchtower() {
     watchtower_protocol::start_watchtower(&rpc);
 }
 
+static INIT: Once = Once::new();
+
+/// Setup function that will only run once, even if called multiple times.
+fn setup_logger() {
+    INIT.call_once(|| {
+        env_logger::Builder::from_env(
+            env_logger::Env::default()
+                .default_filter_or("teleport=info,main=info")
+                .default_write_style_or("always"),
+        )
+        .init();
+    });
+}
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "teleport", about = "A tool for CoinSwap")]
 struct ArgsWithWalletFile {
@@ -441,8 +466,13 @@ enum Subcommand {
     /// Prints receive invoice.
     GetReceiveInvoice,
 
-    /// Runs Maker server on provided port.
-    RunMaker { port: u16 },
+    /// Runs Maker server
+    RunMaker {
+        /// Port to listen on, default is 6102
+        port: Option<u16>,
+        /// Special behavior used for testing e.g. "closeonsignsenderscontracttx"
+        special_behavior: Option<String>,
+    },
 
     /// Runs Taker.
     CoinswapSend,
@@ -463,20 +493,6 @@ enum Subcommand {
     TestWatchtowerClient {
         contract_transactions_hex: Vec<String>,
     },
-}
-
-static INIT: Once = Once::new();
-
-/// Setup function that will only run once, even if called multiple times.
-fn setup_logger() {
-    INIT.call_once(|| {
-        env_logger::Builder::from_env(
-            env_logger::Env::default()
-                .default_filter_or("teleport=info,main=info")
-                .default_write_style_or("always"),
-        )
-        .init();
-    });
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -500,8 +516,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::GetReceiveInvoice => {
             print_receive_invoice(&args.wallet_file_name);
         }
-        Subcommand::RunMaker { port } => {
-            run_maker(&args.wallet_file_name, port);
+        Subcommand::RunMaker {
+            port,
+            special_behavior,
+        } => {
+            run_maker(
+                &args.wallet_file_name,
+                port.unwrap_or(6102),
+                special_behavior,
+            );
         }
         Subcommand::CoinswapSend => {
             run_taker(&args.wallet_file_name);
@@ -691,11 +714,11 @@ mod test {
         });
 
         let maker1_thread = thread::spawn(|| {
-            run_maker(&PathBuf::from_str(MAKER1).unwrap(), 6102);
+            run_maker(&PathBuf::from_str(MAKER1).unwrap(), 6102, None);
         });
 
         let maker2_thread = thread::spawn(|| {
-            run_maker(&PathBuf::from_str(MAKER2).unwrap(), 16102);
+            run_maker(&PathBuf::from_str(MAKER2).unwrap(), 16102, None);
         });
 
         let taker_thread = thread::spawn(|| {

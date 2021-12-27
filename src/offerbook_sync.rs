@@ -11,11 +11,12 @@ pub struct OfferAddress {
     pub address: String, //string for now when its "localhost:port"
 }
 
-const MAKER_HOSTS: [&str; 4] = [
+const MAKER_HOSTS: [&str; 5] = [
     "localhost:6102",
     "localhost:16102",
     "localhost:26102",
     "localhost:36102",
+    "localhost:46102",
 ];
 
 fn parse_message(line: &str) -> Option<MakerToTakerMessage> {

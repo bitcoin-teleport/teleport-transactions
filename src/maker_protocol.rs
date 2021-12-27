@@ -32,29 +32,44 @@ use crate::watchtower_client::{
     ping_watchtowers, register_coinswap_with_watchtowers, ContractInfo,
 };
 
+//used to configure the maker do weird things for testing
+#[derive(Debug, Clone, Copy)]
+pub enum MakerBehavior {
+    Normal,
+    CloseOnSignSendersContractTx,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MakerConfig {
+    pub port: u16,
+    pub rpc_ping_interval: u64,
+    pub watchtower_ping_interval: u64,
+    pub maker_behavior: MakerBehavior,
+}
+
+#[tokio::main]
+pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, config: MakerConfig) {
+    match run(rpc, wallet, config).await {
+        Ok(_o) => log::info!("maker ended without error"),
+        Err(e) => log::info!("maker ended with err {:?}", e),
+    };
+}
+
 // A structure denoting expectation of type of taker message.
 // Used in the [ConnectionState] structure.
 //
 // If the recieved message doesn't match expected method,
 // protocol error will be returned.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 enum ExpectedMessage {
     TakerHello,
     NewlyConnectedTaker,
     SignSendersContractTx,
     ProofOfFunding,
-    SendersAndReceiversContractSigs,
+    ProofOfFundingORSendersAndReceiversContractSigs,
     SignReceiversContractTx,
     HashPreimage,
     PrivateKeyHandover,
-}
-
-#[tokio::main]
-pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) {
-    match run(rpc, wallet, port).await {
-        Ok(_o) => log::info!("maker ended without error"),
-        Err(e) => log::info!("maker ended with err {:?}", e),
-    };
 }
 
 struct ConnectionState {
@@ -64,13 +79,20 @@ struct ConnectionState {
     pending_funding_txes: Option<Vec<Transaction>>,
 }
 
-async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result<(), Error> {
+async fn run(
+    rpc: Arc<Client>,
+    wallet: Arc<RwLock<Wallet>>,
+    config: MakerConfig,
+) -> Result<(), Error> {
+    log::debug!(
+        "Running maker with special behavior = {:?}",
+        config.maker_behavior
+    );
+
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
-
-    //TODO port number in config file
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
-    log::info!("Listening On Port {}", port);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)).await?;
+    log::info!("Listening On Port {}", config.port);
 
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
@@ -91,10 +113,9 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                 }
                 break Err(client_err.unwrap());
             },
-            //TODO make a const for this magic number of how often to ping the rpc
-            _ = sleep(Duration::from_secs(10)) => {
+            _ = sleep(Duration::from_secs(config.rpc_ping_interval)) => {
                 let rpc_ping_success = rpc.get_best_block_hash().is_ok();
-                let watchtowers_ping_interval = Duration::from_secs(300); //TODO put in config file?
+                let watchtowers_ping_interval = Duration::from_secs(config.watchtower_ping_interval);
                 let (watchtowers_ping_success, debug_msg) = if Instant::now()
                         .saturating_duration_since(last_watchtowers_ping)
                         > watchtowers_ping_interval {
@@ -174,6 +195,7 @@ async fn run(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, port: u16) -> Result
                     Arc::clone(&client_rpc),
                     Arc::clone(&client_wallet),
                     addr,
+                    config.maker_behavior,
                 )
                 .await;
                 match message_result {
@@ -222,6 +244,7 @@ async fn handle_message(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     from_addrs: SocketAddr,
+    maker_behavior: MakerBehavior,
 ) -> Result<Option<MakerToTakerMessage>, Error> {
     let request: TakerToMakerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
@@ -261,7 +284,7 @@ async fn handle_message(
                 log::info!("===> [{}] | Sending SendersContractSig", from_addrs.port());
                 log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
-                handle_sign_senders_contract_tx(wallet, message)?
+                handle_sign_senders_contract_tx(wallet, message, maker_behavior)?
             }
             TakerToMakerMessage::ProofOfFunding(proof) => {
                 log::info!("<=== [{}] | Recieved ProofOfFunding", from_addrs.port());
@@ -270,7 +293,8 @@ async fn handle_message(
                     from_addrs.port()
                 );
                 log::debug!("{:#?}", proof);
-                connection_state.allowed_message = ExpectedMessage::SendersAndReceiversContractSigs;
+                connection_state.allowed_message =
+                    ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
                 handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
             }
             TakerToMakerMessage::SignReceiversContractTx(message) => {
@@ -306,7 +330,7 @@ async fn handle_message(
                 log::info!("===> [{}] | Sending SendersContractSig", from_addrs.port());
                 log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
-                handle_sign_senders_contract_tx(wallet, message)?
+                handle_sign_senders_contract_tx(wallet, message, maker_behavior)?
             } else {
                 return Err(Error::Protocol(
                     "Expected Sign sender's contract transaction message",
@@ -321,27 +345,47 @@ async fn handle_message(
                     from_addrs.port()
                 );
                 log::debug!("{:#?}", proof);
-                connection_state.allowed_message = ExpectedMessage::SendersAndReceiversContractSigs;
+                connection_state.allowed_message =
+                    ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
                 handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
             } else {
                 return Err(Error::Protocol("Expected proof of funding message"));
             }
         }
-        ExpectedMessage::SendersAndReceiversContractSigs => {
-            if let TakerToMakerMessage::SendersAndReceiversContractSigs(message) = request {
-                log::info!(
-                    "<=== [{}] | Recieved SendersAndReceiversContractSigs",
-                    from_addrs.port()
-                );
-                // Nothing to send. Maker now creates and broadcasts his funding Txs
-                log::debug!("{:#?}", message);
-                connection_state.allowed_message = ExpectedMessage::SignReceiversContractTx;
-                handle_senders_and_receivers_contract_sigs(connection_state, rpc, wallet, message)
+        ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs => {
+            match request {
+                TakerToMakerMessage::ProofOfFunding(proof) => {
+                    log::info!("<=== [{}] | Recieved ProofOfFunding", from_addrs.port());
+                    log::info!(
+                        "===> [{}] | Sending SignSendersAndReceiversContractTxes",
+                        from_addrs.port()
+                    );
+                    log::debug!("{:#?}", proof);
+                    connection_state.allowed_message =
+                        ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
+                    handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
+                }
+                TakerToMakerMessage::SendersAndReceiversContractSigs(message) => {
+                    log::info!(
+                        "<=== [{}] | Recieved SendersAndReceiversContractSigs",
+                        from_addrs.port()
+                    );
+                    // Nothing to send. Maker now creates and broadcasts his funding Txs
+                    log::debug!("{:#?}", message);
+                    connection_state.allowed_message = ExpectedMessage::SignReceiversContractTx;
+                    handle_senders_and_receivers_contract_sigs(
+                        connection_state,
+                        rpc,
+                        wallet,
+                        message,
+                    )
                     .await?
-            } else {
-                return Err(Error::Protocol(
-                    "Expected sender's and reciever's contract signatures",
-                ));
+                }
+                _ => {
+                    return Err(Error::Protocol(
+                        "Expected proof of funding or sender's and reciever's contract signatures",
+                    ));
+                }
             }
         }
         ExpectedMessage::SignReceiversContractTx => {
@@ -396,7 +440,13 @@ async fn handle_message(
 fn handle_sign_senders_contract_tx(
     wallet: Arc<RwLock<Wallet>>,
     message: SignSendersContractTx,
+    maker_behavior: MakerBehavior,
 ) -> Result<Option<MakerToTakerMessage>, Error> {
+    if let MakerBehavior::CloseOnSignSendersContractTx = maker_behavior {
+        return Err(Error::Protocol(
+            "closing connection early due to special maker behavior",
+        ));
+    }
     let tweakable_privkey = wallet.read().unwrap().get_tweakable_keypair().0;
     //TODO this for loop could be replaced with an iterator and map
     //see that other example where Result<> inside an iterator is used
@@ -435,7 +485,6 @@ fn handle_proof_of_funding(
     }
     for funding_info in &proof.confirmed_funding_txes {
         //check that the claimed multisig redeemscript is in the transaction
-
         log::debug!(
             "Proof of Funding: \ntx = {:#?}\nMultisig_Reedimscript = {:x}",
             funding_info.funding_tx,
@@ -450,7 +499,6 @@ fn handle_proof_of_funding(
         };
         funding_output_indexes.push(funding_output_index);
         funding_outputs.push(funding_output);
-
         let verify_result = contracts::verify_proof_of_funding(
             Arc::clone(&rpc),
             &mut wallet.write().unwrap(),

@@ -60,7 +60,6 @@ async fn run(rpc: &Client, wallet: &mut Wallet) -> Result<(), Error> {
     let offers_addresses = sync_offerbook().await;
     log::info!("<=== Got Offers");
     log::debug!("Offers : {:#?}", offers_addresses);
-
     send_coinswap(rpc, wallet, &offers_addresses).await?;
     Ok(())
 }
@@ -85,38 +84,64 @@ async fn send_coinswap(
         .iter()
         .collect::<Vec<&OfferAddress>>();
 
-    let first_maker = choose_next_maker(&mut maker_offers_addresses).unwrap();
     let (
-        first_maker_multisig_pubkeys,
+        first_maker,
         mut this_maker_multisig_privkeys,
-        first_maker_hashlock_pubkeys,
         mut this_maker_hashlock_privkeys,
-    ) = generate_maker_multisig_and_hashlock_keys(&first_maker.offer.tweakable_point, my_tx_count);
-    let (my_funding_txes, mut outgoing_swapcoins) = wallet
-        .initalize_coinswap(
-            rpc,
-            amount,
-            &first_maker_multisig_pubkeys,
-            &first_maker_hashlock_pubkeys,
-            hashvalue,
+        my_funding_txes,
+        mut outgoing_swapcoins,
+        first_maker_senders_contract_sigs,
+    ) = loop {
+        //loop to help error handling, loop ends if we run out of makers to try
+        let first_maker =
+            choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
+        let (
+            first_maker_multisig_pubkeys,
+            this_maker_multisig_privkeys,
+            first_maker_hashlock_pubkeys,
+            this_maker_hashlock_privkeys,
+        ) = generate_maker_multisig_and_hashlock_keys(
+            &first_maker.offer.tweakable_point,
+            my_tx_count,
+        );
+        let (my_funding_txes, outgoing_swapcoins) = wallet
+            .initalize_coinswap(
+                rpc,
+                amount,
+                &first_maker_multisig_pubkeys,
+                &first_maker_hashlock_pubkeys,
+                hashvalue,
+                first_swap_locktime,
+            )
+            .unwrap();
+        let first_maker_senders_contract_sigs = match request_senders_contract_tx_signatures(
+            &first_maker.address,
+            &outgoing_swapcoins,
+            &this_maker_multisig_privkeys,
+            &this_maker_hashlock_privkeys,
             first_swap_locktime,
         )
-        .unwrap();
-    log::debug!("My Funding Tx:  {:#?}", my_funding_txes);
-    log::debug!("Outgoing SwapCoins: {:#?}", outgoing_swapcoins);
-
-    log::info!(
-        "===> Sending SignSendersContractTx to {}",
-        first_maker.address
-    );
-    let first_maker_senders_contract_sigs = request_senders_contract_tx_signatures(
-        &first_maker.address,
-        &outgoing_swapcoins,
-        &this_maker_multisig_privkeys,
-        &this_maker_hashlock_privkeys,
-        first_swap_locktime,
-    )
-    .await?;
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                log::debug!(
+                    "Failed to obtain senders contract tx signature from first_maker {}: {:?}",
+                    first_maker.address,
+                    e
+                );
+                continue; //go back to the start and try another maker
+            }
+        };
+        break (
+            first_maker,
+            this_maker_multisig_privkeys,
+            this_maker_hashlock_privkeys,
+            my_funding_txes,
+            outgoing_swapcoins,
+            first_maker_senders_contract_sigs,
+        );
+    };
     first_maker_senders_contract_sigs
         .iter()
         .zip(outgoing_swapcoins.iter_mut())
@@ -125,6 +150,9 @@ async fn send_coinswap(
         wallet.add_outgoing_swapcoin(outgoing_swapcoin.clone());
     }
     wallet.update_swap_coins_list().unwrap();
+
+    log::debug!("My Funding Tx:  {:#?}", my_funding_txes);
+    log::debug!("Outgoing SwapCoins: {:#?}", outgoing_swapcoins);
     for my_funding_tx in my_funding_txes.iter() {
         let txid = rpc.send_raw_transaction(my_funding_tx)?;
         log::info!("Broadcasting My Funding Tx: {}", txid);
@@ -171,77 +199,102 @@ async fn send_coinswap(
         };
 
         let current_maker = next_maker;
+        let mut socket = TcpStream::connect(current_maker.address.clone()).await?;
+        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
         let (
             next_peer_multisig_pubkeys,
             next_peer_multisig_keys_or_nonces,
-            next_peer_hashlock_pubkeys,
             next_peer_hashlock_keys_or_nonces,
-        ) = if is_taker_next_peer {
-            generate_my_multisig_and_hashlock_keys(maker_tx_count)
-        } else {
-            next_maker = choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
-            //next_maker is only ever used when the next peer is a maker not a taker
-            //so if its ever used when is_taker_next_peer == true, then thats a bug
-            generate_maker_multisig_and_hashlock_keys(
-                &next_maker.offer.tweakable_point,
-                maker_tx_count,
-            )
-        };
-
-        let mut socket = TcpStream::connect(current_maker.address.clone()).await?;
-        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
-
-        log::info!("===> Sending ProofOfFunding to {}", current_maker.address);
-        let (maker_sign_sender_and_receiver_contracts, next_swap_contract_redeemscripts) =
-            send_proof_of_funding_and_get_contract_txes(
-                &mut socket_reader,
-                &mut socket_writer,
-                &funding_txes,
-                &funding_tx_merkleproofs,
-                &this_maker_multisig_redeemscripts,
-                &this_maker_multisig_privkeys,
-                &this_maker_contract_redeemscripts,
-                &this_maker_hashlock_privkeys,
-                &next_peer_multisig_pubkeys,
-                &next_peer_hashlock_pubkeys,
-                maker_refund_locktime,
-                &this_maker_contract_txes,
-                hashvalue,
-            )
-            .await?;
-        log::info!(
-            "<=== Recieved SignSendersAndReceiversContractTxes from {}",
-            current_maker.address
-        );
-
-        let senders_sigs = if is_taker_next_peer {
-            log::info!("Taker is next peer. Signing Sender's Contract Txs",);
-            sign_senders_contract_txes(
-                &next_peer_multisig_keys_or_nonces,
-                &maker_sign_sender_and_receiver_contracts,
-            )?
-        } else {
+            maker_sign_sender_and_receiver_contracts,
+            next_swap_contract_redeemscripts,
+            senders_sigs,
+        ) = loop {
+            //loop to help error handling, allowing us to keep trying new makers until
+            //we find one for which our request is successful, or until we run out of makers
+            let (
+                next_peer_multisig_pubkeys,
+                next_peer_multisig_keys_or_nonces,
+                next_peer_hashlock_pubkeys,
+                next_peer_hashlock_keys_or_nonces,
+            ) = if is_taker_next_peer {
+                generate_my_multisig_and_hashlock_keys(maker_tx_count)
+            } else {
+                next_maker =
+                    choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
+                //next_maker is only ever accessed when the next peer is a maker, not a taker
+                //i.e. if its ever used when is_taker_next_peer == true, then thats a bug
+                generate_maker_multisig_and_hashlock_keys(
+                    &next_maker.offer.tweakable_point,
+                    maker_tx_count,
+                )
+            };
+            log::info!("===> Sending ProofOfFunding to {}", current_maker.address);
+            let (maker_sign_sender_and_receiver_contracts, next_swap_contract_redeemscripts) =
+                send_proof_of_funding_and_get_contract_txes(
+                    &mut socket_reader,
+                    &mut socket_writer,
+                    &funding_txes,
+                    &funding_tx_merkleproofs,
+                    &this_maker_multisig_redeemscripts,
+                    &this_maker_multisig_privkeys,
+                    &this_maker_contract_redeemscripts,
+                    &this_maker_hashlock_privkeys,
+                    &next_peer_multisig_pubkeys,
+                    &next_peer_hashlock_pubkeys,
+                    maker_refund_locktime,
+                    &this_maker_contract_txes,
+                    hashvalue,
+                )
+                .await?;
             log::info!(
-                "===> Sending SignSendersContractTx, next maker is {}",
-                next_maker.address
+                "<=== Recieved SignSendersAndReceiversContractTxes from {}",
+                current_maker.address
             );
-            let next_swapcoins = create_watch_only_swap_coins(
-                rpc,
-                wallet,
-                &maker_sign_sender_and_receiver_contracts,
-                &next_peer_multisig_pubkeys,
-                &next_swap_contract_redeemscripts,
-            )?;
-            let sigs = request_senders_contract_tx_signatures(
-                &next_maker.address,
-                &next_swapcoins,
-                &next_peer_multisig_keys_or_nonces,
-                &next_peer_hashlock_keys_or_nonces,
-                maker_refund_locktime,
-            )
-            .await?;
-            watchonly_swapcoins.push(next_swapcoins);
-            sigs
+
+            let senders_sigs = if is_taker_next_peer {
+                log::info!("Taker is next peer. Signing Sender's Contract Txs",);
+                sign_senders_contract_txes(
+                    &next_peer_multisig_keys_or_nonces,
+                    &maker_sign_sender_and_receiver_contracts,
+                )?
+            } else {
+                let next_swapcoins = create_watch_only_swap_coins(
+                    rpc,
+                    wallet,
+                    &maker_sign_sender_and_receiver_contracts,
+                    &next_peer_multisig_pubkeys,
+                    &next_swap_contract_redeemscripts,
+                )?;
+                let sigs = match request_senders_contract_tx_signatures(
+                    &next_maker.address,
+                    &next_swapcoins,
+                    &next_peer_multisig_keys_or_nonces,
+                    &next_peer_hashlock_keys_or_nonces,
+                    maker_refund_locktime,
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::debug!(
+                            "Fail to obtain senders contract tx signature from next_maker {}: {:?}",
+                            next_maker.address,
+                            e
+                        );
+                        continue; //go back to the start and try another maker
+                    }
+                };
+                watchonly_swapcoins.push(next_swapcoins);
+                sigs
+            };
+            break (
+                next_peer_multisig_pubkeys,
+                next_peer_multisig_keys_or_nonces,
+                next_peer_hashlock_keys_or_nonces,
+                maker_sign_sender_and_receiver_contracts,
+                next_swap_contract_redeemscripts,
+                senders_sigs,
+            );
         };
 
         let receivers_sigs = if is_taker_previous_peer {
@@ -275,7 +328,6 @@ async fn send_coinswap(
             "===> Sending SendersAndReceiversContractSigs to {}",
             current_maker.address
         );
-
         send_message(
             &mut socket_writer,
             TakerToMakerMessage::SendersAndReceiversContractSigs(SendersAndReceiversContractSigs {
@@ -498,12 +550,10 @@ async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTak
             "EOF",
         ))));
     }
-
     let message: MakerToTakerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
         Err(_e) => return Err(Error::Protocol("json parsing error")),
     };
-
     log::debug!("<== {:#?}", message);
     Ok(message)
 }
@@ -513,7 +563,6 @@ async fn handshake_maker(
 ) -> Result<(BufReader<ReadHalf<'_>>, WriteHalf<'_>), Error> {
     let (reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(reader);
-
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::TakerHello(TakerHello {
@@ -522,7 +571,6 @@ async fn handshake_maker(
         }),
     )
     .await?;
-
     let makerhello =
         if let MakerToTakerMessage::MakerHello(m) = read_message(&mut socket_reader).await? {
             m
@@ -530,7 +578,6 @@ async fn handshake_maker(
             return Err(Error::Protocol("expected method makerhello"));
         };
     log::debug!("{:#?}", makerhello);
-
     Ok((socket_reader, socket_writer))
 }
 
@@ -585,6 +632,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
+    log::info!("===> Sending SignSendersContractTx to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address).await?;
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
     send_message(
@@ -620,7 +668,6 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     } else {
         return Err(Error::Protocol("expected method senderscontractsig"));
     };
-
     if maker_senders_contract_sig.sigs.len() != outgoing_swapcoins.len() {
         return Err(Error::Protocol("wrong number of signatures from maker"));
     }
@@ -631,9 +678,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
         .any(|(sig, outgoing_swapcoin)| !outgoing_swapcoin.verify_contract_tx_sender_sig(&sig))
     {
         return Err(Error::Protocol("invalid signature from maker"));
-        //TODO now go back to the start and try with another maker, in a loop
     }
-
     log::info!("<=== Received SendersContractSig from {}", maker_address);
     Ok(maker_senders_contract_sig.sigs)
 }
@@ -886,7 +931,6 @@ async fn send_proof_of_funding_and_get_contract_txes(
             &contract_redeemscript,
         )?;
     }
-
     let next_swap_contract_redeemscripts = next_peer_hashlock_pubkeys
         .iter()
         .zip(
