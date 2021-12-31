@@ -572,24 +572,9 @@ impl SwapCoin for OutgoingSwapCoin {
     }
 }
 
-macro_rules! sign_and_verify_contract {
+macro_rules! verify_contract {
     ($coin:ident) => {
         impl $coin {
-            //"_with_my_privkey" as opposed to with other_privkey
-            pub fn sign_contract_tx_with_my_privkey(
-                &self,
-                contract_tx: &Transaction,
-            ) -> Result<Signature, Error> {
-                let multisig_redeemscript = self.get_multisig_redeemscript();
-                Ok(sign_contract_tx(
-                    contract_tx,
-                    &multisig_redeemscript,
-                    self.funding_amount,
-                    &self.my_privkey,
-                )
-                .map_err(|_| Error::Protocol("error with signing contract tx"))?)
-            }
-
             pub fn verify_contract_tx_sig(&self, sig: &Signature) -> bool {
                 verify_contract_tx_sig(
                     &self.contract_tx,
@@ -603,8 +588,25 @@ macro_rules! sign_and_verify_contract {
     };
 }
 
-sign_and_verify_contract!(IncomingSwapCoin);
-sign_and_verify_contract!(OutgoingSwapCoin);
+verify_contract!(IncomingSwapCoin);
+verify_contract!(OutgoingSwapCoin);
+
+impl OutgoingSwapCoin {
+    //"_with_my_privkey" as opposed to with other_privkey
+    pub fn sign_contract_tx_with_my_privkey(
+        &self,
+        contract_tx: &Transaction,
+    ) -> Result<Signature, Error> {
+        let multisig_redeemscript = self.get_multisig_redeemscript();
+        Ok(sign_contract_tx(
+            contract_tx,
+            &multisig_redeemscript,
+            self.funding_amount,
+            &self.my_privkey,
+        )
+        .map_err(|_| Error::Protocol("error with signing contract tx"))?)
+    }
+}
 
 impl SwapCoin for WatchOnlySwapCoin {
     fn get_multisig_redeemscript(&self) -> Script {

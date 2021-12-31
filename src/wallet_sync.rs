@@ -438,13 +438,6 @@ impl Wallet {
         self.incoming_swap_coins.get_mut(multisig_redeemscript)
     }
 
-    pub fn find_outgoing_swapcoin_mut(
-        &mut self,
-        multisig_redeemscript: &Script,
-    ) -> Option<&mut OutgoingSwapCoin> {
-        self.outgoing_swap_coins.get_mut(multisig_redeemscript)
-    }
-
     pub fn add_incoming_swapcoin(&mut self, coin: IncomingSwapCoin) {
         self.incoming_swap_coins
             .insert(coin.get_multisig_redeemscript(), coin);

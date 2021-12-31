@@ -724,20 +724,15 @@ fn handle_sign_receivers_contract_tx(
     let mut sigs = Vec::<Signature>::new();
     for receivers_contract_tx_info in message.txes {
         sigs.push(
-            if let Some(c) = wallet
+            //the fact that the peer knows the correct multisig_redeemscript is what ensures
+            //security here, a random peer out there who isnt involved in a coinswap wont know
+            //what the multisig_redeemscript is
+            wallet
                 .read()
                 .unwrap()
-                .find_incoming_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
-            {
-                c.sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?
-            } else {
-                wallet
-                    .read()
-                    .unwrap()
-                    .find_outgoing_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
-                    .ok_or(Error::Protocol("multisig_redeemscript not found"))?
-                    .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?
-            },
+                .find_outgoing_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
+                .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+                .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?,
         );
     }
     Ok(Some(MakerToTakerMessage::ReceiversContractSig(
@@ -799,16 +794,10 @@ fn handle_private_key_handover(
 ) -> Result<Option<MakerToTakerMessage>, Error> {
     let mut wallet_ref = wallet.write().unwrap();
     for swapcoin_private_key in message.swapcoin_private_keys {
-        if let Some(c) =
-            wallet_ref.find_incoming_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
-        {
-            c.apply_privkey(swapcoin_private_key.key)?
-        } else {
-            wallet_ref
-                .find_outgoing_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
-                .ok_or(Error::Protocol("multisig_redeemscript not found"))?
-                .apply_privkey(swapcoin_private_key.key)?
-        }
+        wallet_ref
+            .find_incoming_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
+            .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+            .apply_privkey(swapcoin_private_key.key)?
     }
     wallet_ref.update_swap_coins_list()?;
     log::info!("Successfully Completed Coinswap");
