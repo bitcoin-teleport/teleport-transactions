@@ -40,30 +40,30 @@ The project is nowhere near usable. The code written so far is published for dev
 
 ```
 $ cargo run -- --wallet-file-name=maker1.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-8f6ee5..74e813:0 bcrt1q0vn5....nrjdqljtaq    no    1       0.05000000 BTC
-d548a8..cadd5e:0 bcrt1qaylc....vnw4ay98jq    no    1       0.05000000 BTC
-604ca6..4ab5f0:1 bcrt1qt3jy....df6pmewmzs    no    1       0.05000000 BTC
+coin             address                    type   conf    value
+8f6ee5..74e813:0 bcrt1q0vn5....nrjdqljtaq   seed   1       0.05000000 BTC
+d548a8..cadd5e:0 bcrt1qaylc....vnw4ay98jq   seed   1       0.05000000 BTC
+604ca6..4ab5f0:1 bcrt1qt3jy....df6pmewmzs   seed   1       0.05000000 BTC
 coin count = 3
 total balance = 0.15000000 BTC
 ```
 
 ```
 $ cargo run -- --wallet-file-name=maker2.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-d33f06..30dd07:0 bcrt1qh6kq....e0tlfrzgxa    no    1       0.05000000 BTC
-8aaa89..ef5613:0 bcrt1q9vyj....plh8x37n7g    no    1       0.05000000 BTC
-383ffe..127065:1 bcrt1qlwzv....pdqtrg0xuu    no    1       0.05000000 BTC
+coin             address                    type   conf    value
+d33f06..30dd07:0 bcrt1qh6kq....e0tlfrzgxa   seed   1       0.05000000 BTC
+8aaa89..ef5613:0 bcrt1q9vyj....plh8x37n7g   seed   1       0.05000000 BTC
+383ffe..127065:1 bcrt1qlwzv....pdqtrg0xuu   seed   1       0.05000000 BTC
 coin count = 3
 total balance = 0.15000000 BTC
 ```
 
 ```
 $ cargo run -- --wallet-file-name=taker.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-5f4331..d53f14:0 bcrt1qmflt....q2ucgf2teu    no    1       0.05000000 BTC
-6252ee..d827b0:0 bcrt1qu9mk....pwpedjyl9u    no    1       0.05000000 BTC
-ac88da..e3ead6:0 bcrt1q3xdx....e7gxtcgrfg    no    1       0.05000000 BTC
+coin             address                    type   conf    value
+5f4331..d53f14:0 bcrt1qmflt....q2ucgf2teu   seed   1       0.05000000 BTC
+6252ee..d827b0:0 bcrt1qu9mk....pwpedjyl9u   seed   1       0.05000000 BTC
+ac88da..e3ead6:0 bcrt1q3xdx....e7gxtcgrfg   seed   1       0.05000000 BTC
 coin count = 3
 total balance = 0.15000000 BTC
 ```
@@ -80,39 +80,39 @@ total balance = 0.15000000 BTC
 
 ```
 $ cargo run -- --wallet-file-name=maker1.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-9bfeec..0cc468:0 bcrt1qx49k....9cqqrp3kt0   yes    2       0.00134344 BTC
-973ab4..48f5b7:1 bcrt1qdu4j....ru3qmw4gcf   yes    2       0.00224568 BTC
-2edf14..74c3b9:0 bcrt1qfw6z....msrsdx9sl0   yes    2       0.00131088 BTC
-bd6321..217707:0 bcrt1q35g8....rt6al6kz7s    no    1       0.04758551 BTC
-c6564e..40fb64:0 bcrt1qrnzc....czs840p4np    no    1       0.04947775 BTC
-08e857..c8c67b:0 bcrt1qdxdg....k7882f0ya2    no    1       0.04808502 BTC
+coin             address                    type   conf    value
+9bfeec..0cc468:0 bcrt1qx49k....9cqqrp3kt0 swapcoin 2       0.00134344 BTC
+973ab4..48f5b7:1 bcrt1qdu4j....ru3qmw4gcf swapcoin 2       0.00224568 BTC
+2edf14..74c3b9:0 bcrt1qfw6z....msrsdx9sl0 swapcoin 2       0.00131088 BTC
+bd6321..217707:0 bcrt1q35g8....rt6al6kz7s   seed   1       0.04758551 BTC
+c6564e..40fb64:0 bcrt1qrnzc....czs840p4np   seed   1       0.04947775 BTC
+08e857..c8c67b:0 bcrt1qdxdg....k7882f0ya2   seed   1       0.04808502 BTC
 coin count = 6
 total balance = 0.15004828 BTC
 ```
 
 ```
 $ cargo run -- --wallet-file-name=maker2.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-9d8895..e32645:1 bcrt1qm73u....3h6swyege3   yes    3       0.00046942 BTC
-7cab11..07ff62:1 bcrt1quumg....gtjs29jt8t   yes    3       0.00009015 BTC
-289a13..ab4672:0 bcrt1qsavn....t5dsac43tl   yes    3       0.00444043 BTC
-9bfeec..0cc468:1 bcrt1q24f8....443ts4rzz0    no    2       0.04863932 BTC
-973ab4..48f5b7:0 bcrt1q5klz....jhhtlyjpkg    no    2       0.04773708 BTC
-2edf14..74c3b9:1 bcrt1qh2aw....7xx8wft658    no    2       0.04867188 BTC
+coin             address                    type   conf    value
+9d8895..e32645:1 bcrt1qm73u....3h6swyege3 swapcoin 3       0.00046942 BTC
+7cab11..07ff62:1 bcrt1quumg....gtjs29jt8t swapcoin 3       0.00009015 BTC
+289a13..ab4672:0 bcrt1qsavn....t5dsac43tl swapcoin 3       0.00444043 BTC
+9bfeec..0cc468:1 bcrt1q24f8....443ts4rzz0   seed   2       0.04863932 BTC
+973ab4..48f5b7:0 bcrt1q5klz....jhhtlyjpkg   seed   2       0.04773708 BTC
+2edf14..74c3b9:1 bcrt1qh2aw....7xx8wft658   seed   2       0.04867188 BTC
 coin count = 6
 total balance = 0.15004828 BTC
 ```
 
 ```
 $ cargo run -- --wallet-file-name=taker.teleport wallet-balance
-outpoint         address                  swapcoin conf    value
-9d8895..e32645:0 bcrt1qevgn....6nhl2yswa7    no    3       0.04951334 BTC
-7cab11..07ff62:0 bcrt1qxs5f....0j8khru45s    no    3       0.04989261 BTC
-289a13..ab4672:1 bcrt1qkwka....g9ts2ch392    no    3       0.04554233 BTC
-bd6321..217707:1 bcrt1qat5h....vytquawwke   yes    1       0.00239725 BTC
-c6564e..40fb64:1 bcrt1qshwp....3x8qjtwdf6   yes    1       0.00050501 BTC
-08e857..c8c67b:1 bcrt1q37lf....5tvqndktw6   yes    1       0.00189774 BTC
+coin             address                    type   conf    value
+9d8895..e32645:0 bcrt1qevgn....6nhl2yswa7   seed   3       0.04951334 BTC
+7cab11..07ff62:0 bcrt1qxs5f....0j8khru45s   seed   3       0.04989261 BTC
+289a13..ab4672:1 bcrt1qkwka....g9ts2ch392   seed   3       0.04554233 BTC
+bd6321..217707:1 bcrt1qat5h....vytquawwke swapcoin 1       0.00239725 BTC
+c6564e..40fb64:1 bcrt1qshwp....3x8qjtwdf6 swapcoin 1       0.00050501 BTC
+08e857..c8c67b:1 bcrt1q37lf....5tvqndktw6 swapcoin 1       0.00189774 BTC
 coin count = 6
 total balance = 0.14974828 BTC
 ```

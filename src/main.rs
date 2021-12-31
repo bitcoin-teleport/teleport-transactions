@@ -151,8 +151,8 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
     let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
     println!("= spendable wallet balance =");
     println!(
-        "{:16} {:24} {:8} {:<7} value",
-        "outpoint", "address", "type", "conf",
+        "{:16} {:24} {:^8} {:<7} value",
+        "coin", "address", "type", "conf",
     );
     for utxo in utxos {
         let txid = utxo.txid.to_hex();
@@ -195,7 +195,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
                 .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
             println!(
                 "{:16} {:8} {:8} {:<15} {:<7} value",
-                "outpoint", "type", "preimage", "locktime/blocks", "conf",
+                "coin", "type", "preimage", "locktime/blocks", "conf",
             );
 
             for ((utxo, swapcoin), contract_type) in utxo_incoming_swapcoins
@@ -240,7 +240,7 @@ fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
         println!("= live timelocked contracts =");
         println!(
             "{:16} {:8} {:<7} {:<8} {:6}",
-            "outpoint", "timelock", "conf", "locked?", "value"
+            "coin", "timelock", "conf", "locked?", "value"
         );
         for (outgoing_swapcoin, utxo) in outgoing_contract_utxos {
             let txid = utxo.txid.to_hex();
