@@ -12,14 +12,16 @@ use tokio::time::sleep;
 
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::{OutPoint, PublicKey, Transaction, TxOut};
+use bitcoin::{Amount, OutPoint, PublicKey, Transaction, TxOut, Txid};
 use bitcoincore_rpc::{Client, RpcApi};
 
 use itertools::izip;
 
 use crate::contracts;
 use crate::contracts::SwapCoin;
-use crate::contracts::{find_funding_output, read_hashvalue_from_contract};
+use crate::contracts::{
+    find_funding_output, read_hashvalue_from_contract, read_locktime_from_contract,
+};
 use crate::error::Error;
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
@@ -51,7 +53,7 @@ pub struct MakerConfig {
 pub async fn start_maker(rpc: Arc<Client>, wallet: Arc<RwLock<Wallet>>, config: MakerConfig) {
     match run(rpc, wallet, config).await {
         Ok(_o) => log::info!("maker ended without error"),
-        Err(e) => log::info!("maker ended with err {:?}", e),
+        Err(e) => log::info!("maker ended with err: {:?}", e),
     };
 }
 
@@ -136,7 +138,11 @@ async fn run(
             continue;
         }
 
-        log::info!("<=== [{}] | Accepted Connection From", addr.port());
+        log::info!(
+            "[{}] ===> Accepted Connection on port={}",
+            addr.port(),
+            addr.port()
+        );
         let client_rpc = Arc::clone(&rpc);
         let client_wallet = Arc::clone(&wallet);
         let server_loop_comms_tx = server_loop_comms_tx.clone();
@@ -169,7 +175,7 @@ async fn run(
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(n) if n == 0 => {
-                        log::info!("Reached EOF");
+                        log::info!("[{}] Reached EOF", addr.port());
                         break;
                     }
                     Ok(_n) => (),
@@ -251,10 +257,26 @@ async fn handle_message(
         Err(_e) => return Err(Error::Protocol("message parsing error")),
     };
 
+    log::info!(
+        "[{}] ===> {} ",
+        from_addrs.port(),
+        match request {
+            TakerToMakerMessage::TakerHello(_) => "TakerHello",
+            TakerToMakerMessage::GiveOffer(_) => "GiveOffer",
+            TakerToMakerMessage::SignSendersContractTx(_) => "SignSendersContractTx",
+            TakerToMakerMessage::ProofOfFunding(_) => "ProofOfFunding",
+            TakerToMakerMessage::SendersAndReceiversContractSigs(_) =>
+                "SendersAndReceiversContractSigs",
+            TakerToMakerMessage::SignReceiversContractTx(_) => "SignReceiversContractTx",
+            TakerToMakerMessage::HashPreimage(_) => "HashPreimage",
+            TakerToMakerMessage::PrivateKeyHandover(_) => "PrivateKeyHandover",
+        }
+    );
+    log::debug!("{:#?}", request);
+
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
             if let TakerToMakerMessage::TakerHello(_) = request {
-                log::debug!("{:#?}", request);
                 connection_state.allowed_message = ExpectedMessage::NewlyConnectedTaker;
                 None
             } else {
@@ -263,8 +285,6 @@ async fn handle_message(
         }
         ExpectedMessage::NewlyConnectedTaker => match request {
             TakerToMakerMessage::GiveOffer(_) => {
-                log::info!("<=== [{}] | Recieved GiveOffer", from_addrs.port());
-                log::info!("===> [{}] | Sending Offer Data", from_addrs.port());
                 let max_size = wallet.read().unwrap().get_offer_maxsize(rpc)?;
                 let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
                 connection_state.allowed_message = ExpectedMessage::SignSendersContractTx;
@@ -277,43 +297,19 @@ async fn handle_message(
                 }))
             }
             TakerToMakerMessage::SignSendersContractTx(message) => {
-                log::info!(
-                    "<=== [{}] | Recieved SignSendersContractTx ",
-                    from_addrs.port()
-                );
-                log::info!("===> [{}] | Sending SendersContractSig", from_addrs.port());
-                log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
                 handle_sign_senders_contract_tx(wallet, message, maker_behavior)?
             }
             TakerToMakerMessage::ProofOfFunding(proof) => {
-                log::info!("<=== [{}] | Recieved ProofOfFunding", from_addrs.port());
-                log::info!(
-                    "===> [{}] | Sending SignSendersAndReceiversContractTxes",
-                    from_addrs.port()
-                );
-                log::debug!("{:#?}", proof);
                 connection_state.allowed_message =
                     ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
                 handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
             }
             TakerToMakerMessage::SignReceiversContractTx(message) => {
-                log::info!(
-                    "<=== [{}] | Recieved SignReceiversContractTx",
-                    from_addrs.port()
-                );
-                log::info!(
-                    "===> [{}] | Sending ReceiversContractSig",
-                    from_addrs.port()
-                );
-                log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
                 handle_sign_receivers_contract_tx(wallet, message)?
             }
             TakerToMakerMessage::HashPreimage(message) => {
-                log::info!("<=== [{}] | Recieved HashPreimage", from_addrs.port());
-                log::info!("===> [{}] | Sending Private Keys", from_addrs.port());
-                log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
                 handle_hash_preimage(wallet, message)?
             }
@@ -323,12 +319,6 @@ async fn handle_message(
         },
         ExpectedMessage::SignSendersContractTx => {
             if let TakerToMakerMessage::SignSendersContractTx(message) = request {
-                log::info!(
-                    "<=== [{}] | Recieved SignSendersContractTx ",
-                    from_addrs.port()
-                );
-                log::info!("===> [{}] | Sending SendersContractSig", from_addrs.port());
-                log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
                 handle_sign_senders_contract_tx(wallet, message, maker_behavior)?
             } else {
@@ -339,12 +329,6 @@ async fn handle_message(
         }
         ExpectedMessage::ProofOfFunding => {
             if let TakerToMakerMessage::ProofOfFunding(proof) = request {
-                log::info!("<=== [{}] | Recieved ProofOfFunding", from_addrs.port());
-                log::info!(
-                    "===> [{}] | Sending SignSendersAndReceiversContractTxes",
-                    from_addrs.port()
-                );
-                log::debug!("{:#?}", proof);
                 connection_state.allowed_message =
                     ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
                 handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
@@ -355,23 +339,12 @@ async fn handle_message(
         ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs => {
             match request {
                 TakerToMakerMessage::ProofOfFunding(proof) => {
-                    log::info!("<=== [{}] | Recieved ProofOfFunding", from_addrs.port());
-                    log::info!(
-                        "===> [{}] | Sending SignSendersAndReceiversContractTxes",
-                        from_addrs.port()
-                    );
-                    log::debug!("{:#?}", proof);
                     connection_state.allowed_message =
                         ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
                     handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
                 }
                 TakerToMakerMessage::SendersAndReceiversContractSigs(message) => {
-                    log::info!(
-                        "<=== [{}] | Recieved SendersAndReceiversContractSigs",
-                        from_addrs.port()
-                    );
                     // Nothing to send. Maker now creates and broadcasts his funding Txs
-                    log::debug!("{:#?}", message);
                     connection_state.allowed_message = ExpectedMessage::SignReceiversContractTx;
                     handle_senders_and_receivers_contract_sigs(
                         connection_state,
@@ -390,15 +363,6 @@ async fn handle_message(
         }
         ExpectedMessage::SignReceiversContractTx => {
             if let TakerToMakerMessage::SignReceiversContractTx(message) = request {
-                log::info!(
-                    "<=== [{}] | Recieved SignReceiversContractTx",
-                    from_addrs.port()
-                );
-                log::info!(
-                    "===> [{}] | Sending ReceiversContractSig",
-                    from_addrs.port()
-                );
-                log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
                 handle_sign_receivers_contract_tx(wallet, message)?
             } else {
@@ -407,9 +371,6 @@ async fn handle_message(
         }
         ExpectedMessage::HashPreimage => {
             if let TakerToMakerMessage::HashPreimage(message) = request {
-                log::info!("<=== [{}] | Recieved HashPreimage", from_addrs.port());
-                log::info!("===> [{}] | Sending Private Keys", from_addrs.port());
-                log::debug!("{:#?}", message);
                 connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
                 handle_hash_preimage(wallet, message)?
             } else {
@@ -418,9 +379,7 @@ async fn handle_message(
         }
         ExpectedMessage::PrivateKeyHandover => {
             if let TakerToMakerMessage::PrivateKeyHandover(message) = request {
-                log::info!("<=== [{}] | Recieved Private Keys", from_addrs.port());
                 // Nothing to send. Succesfully completed swap
-                log::debug!("{:#?}", message);
                 handle_private_key_handover(wallet, message)?
             } else {
                 return Err(Error::Protocol("expected privatekey handover"));
@@ -429,9 +388,22 @@ async fn handle_message(
     };
 
     match outgoing_message {
-        Some(result) => {
-            log::debug!("{:#?}", result);
-            Ok(Some(result))
+        Some(reply_message) => {
+            log::info!(
+                "[{}] <=== {} ",
+                from_addrs.port(),
+                match reply_message {
+                    MakerToTakerMessage::MakerHello(_) => "MakerHello",
+                    MakerToTakerMessage::Offer(_) => "Offer",
+                    MakerToTakerMessage::SendersContractSig(_) => "SendersContractSig",
+                    MakerToTakerMessage::SignSendersAndReceiversContractTxes(_) =>
+                        "SignSendersAndReceiversContractTxes",
+                    MakerToTakerMessage::ReceiversContractSig(_) => "ReceiversContractSig",
+                    MakerToTakerMessage::PrivateKeyHandover(_) => "PrivateKeyHandover",
+                }
+            );
+            log::debug!("{:#?}", reply_message);
+            Ok(Some(reply_message))
         }
         None => Ok(None),
     }
@@ -451,6 +423,8 @@ fn handle_sign_senders_contract_tx(
     //TODO this for loop could be replaced with an iterator and map
     //see that other example where Result<> inside an iterator is used
     let mut sigs = Vec::<Signature>::new();
+    let mut funding_txids = Vec::<Txid>::new();
+    let mut total_amount = 0;
     for txinfo in message.txes_info {
         let sig = contracts::validate_and_sign_senders_contract_tx(
             &txinfo.multisig_key_nonce,
@@ -465,7 +439,14 @@ fn handle_sign_senders_contract_tx(
             &mut wallet.write().unwrap(),
         )?;
         sigs.push(sig);
+        funding_txids.push(txinfo.senders_contract_tx.input[0].previous_output.txid);
+        total_amount += txinfo.funding_input_value;
     }
+    log::info!(
+        "requested contracts amount={}, for funding txids = {:?}",
+        Amount::from_sat(total_amount),
+        funding_txids
+    );
     Ok(Some(MakerToTakerMessage::SendersContractSig(
         SendersContractSig { sigs },
     )))
@@ -576,10 +557,29 @@ fn handle_proof_of_funding(
     }
 
     //set up the next coinswap address in the route
-    let coinswap_fees = 10000; //TODO calculate them properly
+    let coinswap_fees = 10000; //TODO calculate them properly, and output log "potentially earned"
     let incoming_amount = funding_outputs.iter().map(|o| o.value).sum::<u64>();
     log::debug!("incoming amount = {}", incoming_amount);
     let amount = incoming_amount - coinswap_fees;
+
+    log::info!(
+        concat!(
+            "proof of funding valid. amount={}, incoming_locktime={} blocks, ",
+            "hashvalue={}, funding txes = {:?} creating own funding txes, outgoing_locktime={}",
+            "blocks "
+        ),
+        Amount::from_sat(incoming_amount),
+        read_locktime_from_contract(&proof.confirmed_funding_txes[0].contract_redeemscript)
+            .unwrap(),
+        //unwrap() as format of contract_redeemscript already checked in verify_proof_of_funding
+        hashvalue,
+        proof
+            .confirmed_funding_txes
+            .iter()
+            .map(|cft| cft.funding_tx.txid())
+            .collect::<Vec<Txid>>(),
+        proof.next_locktime
+    );
 
     let (my_funding_txes, outgoing_swapcoins) = wallet.write().unwrap().initalize_coinswap(
         &rpc,
@@ -700,12 +700,14 @@ async fn handle_senders_and_receivers_contract_sigs(
         .for_each(|outgoing_swapcoin| w.add_outgoing_swapcoin(outgoing_swapcoin.clone()));
     w.update_swap_coins_list()?;
 
+    let mut my_funding_txids = Vec::<Txid>::new();
     for my_funding_tx in connection_state.pending_funding_txes.as_ref().unwrap() {
         log::debug!("Broadcasting My Funding Tx : {:#?}", my_funding_tx);
         let txid = rpc.send_raw_transaction(my_funding_tx)?;
         assert_eq!(txid, my_funding_tx.txid());
-        log::info!("Broadcasted My Funding Tx: {}", txid);
+        my_funding_txids.push(txid);
     }
+    log::info!("Broadcasted My Funding Txes: {:?}", my_funding_txids);
 
     //set these to None which might be helpful in picking up logic errors later
     connection_state.incoming_swapcoins = None;
@@ -764,6 +766,7 @@ fn handle_hash_preimage(
         }
         //TODO tell preimage to watchtowers
     }
+    log::info!("received preimage for hashvalue={}", hashvalue);
     let wallet_ref = wallet.read().unwrap();
     let mut swapcoin_private_keys = Vec::<SwapCoinPrivateKey>::new();
     for multisig_redeemscript in message.receivers_multisig_redeemscripts {
