@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::iter::FromIterator;
 use std::net::Ipv4Addr;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tokio::io::BufReader;
@@ -65,15 +66,15 @@ pub enum WatchtowerToMakerMessage {
 //pub async fn
 
 #[tokio::main]
-pub async fn start_watchtower(rpc: &Client) {
-    match run(rpc).await {
+pub async fn start_watchtower(rpc: &Client, kill_flag: Arc<RwLock<bool>>) {
+    match run(rpc, kill_flag).await {
         Ok(_o) => log::info!("watchtower ended without error"),
         Err(e) => log::info!("watchtower ended with err {:?}", e),
     };
 }
 
 //TODO i think rpc doesnt need to be wrapped in Arc, because its not used in the spawned task
-async fn run(rpc: &Client) -> Result<(), Error> {
+async fn run(rpc: &Client, kill_flag: Arc<RwLock<bool>>) -> Result<(), Error> {
     //TODO port number in config file
     let port = 6103;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
@@ -121,6 +122,9 @@ async fn run(rpc: &Client) -> Result<(), Error> {
                     &mut last_checked_block_height);
                 accepting_clients = r.is_ok();
                 log::info!("Timeout Branch, Accepting Clients @ {}", port);
+                if *kill_flag.read().unwrap() {
+                    break Err(Error::Protocol("kill flag is true"));
+                }
                 continue;
             },
         };
@@ -164,15 +168,6 @@ async fn run(rpc: &Client) -> Result<(), Error> {
                         break;
                     }
                 };
-                #[cfg(test)]
-                if line == "kill".to_string() {
-                    server_loop_err_comms_tx
-                        .send(Error::Protocol("kill signal"))
-                        .await
-                        .unwrap();
-                    log::info!("Kill signal received, stopping watchtower....");
-                    break;
-                }
 
                 line = line.trim_end().to_string();
                 let message_result = handle_message(line, &watched_txes_comms_tx).await;

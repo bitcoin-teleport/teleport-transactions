@@ -62,11 +62,6 @@ pub const NETWORK: Network = Network::Regtest; //not configurable for now
 const DERIVATION_PATH: &str = "m/84'/1'/0'";
 const WALLET_FILE_VERSION: u32 = 0;
 
-#[cfg(not(test))]
-const INITIAL_ADDRESS_IMPORT_COUNT: usize = 5000;
-#[cfg(test)]
-const INITIAL_ADDRESS_IMPORT_COUNT: usize = 6;
-
 //TODO the wallet file format is probably best handled with sqlite
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -84,8 +79,14 @@ pub struct Wallet {
     master_key: ExtendedPrivKey,
     wallet_file_name: String,
     external_index: u32,
+    initial_address_import_count: usize,
     incoming_swap_coins: HashMap<Script, IncomingSwapCoin>,
     outgoing_swap_coins: HashMap<Script, OutgoingSwapCoin>,
+}
+
+pub enum WalletSyncAddressAmount {
+    Normal,
+    Testing,
 }
 
 pub enum CoreAddressLabelType {
@@ -348,7 +349,10 @@ impl Wallet {
             .map_err(|e| io::Error::from(e))?)
     }
 
-    pub fn load_wallet_from_file<P: AsRef<Path>>(wallet_file_name: P) -> Result<Wallet, Error> {
+    pub fn load_wallet_from_file<P: AsRef<Path>>(
+        wallet_file_name: P,
+        sync_amount: WalletSyncAddressAmount,
+    ) -> Result<Wallet, Error> {
         let wallet_file_name = wallet_file_name
             .as_ref()
             .as_os_str()
@@ -372,6 +376,10 @@ impl Wallet {
             master_key: xprv,
             wallet_file_name,
             external_index: wallet_file_data.external_index,
+            initial_address_import_count: match sync_amount {
+                WalletSyncAddressAmount::Normal => 5000,
+                WalletSyncAddressAmount::Testing => 6,
+            },
             incoming_swap_coins: wallet_file_data
                 .incoming_swap_coins
                 .iter()
@@ -395,7 +403,6 @@ impl Wallet {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn get_external_index(&self) -> u32 {
         self.external_index
     }
@@ -448,7 +455,6 @@ impl Wallet {
             .insert(coin.get_multisig_redeemscript(), coin);
     }
 
-    #[cfg(test)]
     pub fn get_swap_coins_count(&self) -> usize {
         self.incoming_swap_coins.len() + self.outgoing_swap_coins.len()
     }
@@ -503,7 +509,7 @@ impl Wallet {
 
     fn is_xpub_descriptor_imported(&self, rpc: &Client, descriptor: &str) -> Result<bool, Error> {
         let first_addr = rpc.derive_addresses(&descriptor, Some([0, 0]))?[0].clone();
-        let last_index = (INITIAL_ADDRESS_IMPORT_COUNT - 1) as u32;
+        let last_index = (self.initial_address_import_count - 1) as u32;
         let last_addr =
             rpc.derive_addresses(&descriptor, Some([last_index, last_index]))?[0].clone();
 
@@ -566,6 +572,9 @@ impl Wallet {
         hd_descriptors_to_import: &[&String],
         swapcoin_descriptors_to_import: &[String],
     ) -> Result<(), Error> {
+        log::debug!(target: "wallet",
+            "import_initial_addresses with initial_address_import_count = {}",
+            self.initial_address_import_count);
         let address_label = self.get_core_wallet_label();
 
         let import_requests = hd_descriptors_to_import
@@ -573,7 +582,7 @@ impl Wallet {
             .map(|desc| ImportMultiRequest {
                 timestamp: ImportMultiRescanSince::Now,
                 descriptor: Some(desc),
-                range: Some((0, INITIAL_ADDRESS_IMPORT_COUNT - 1)),
+                range: Some((0, self.initial_address_import_count - 1)),
                 watchonly: Some(true),
                 label: Some(&address_label),
                 ..Default::default()
@@ -607,7 +616,6 @@ impl Wallet {
 
     pub fn startup_sync(&mut self, rpc: &Client) -> Result<(), Error> {
         //TODO many of these unwraps to be replaced with proper error handling
-
         let hd_descriptors = self.get_hd_wallet_descriptors(rpc)?;
         let hd_descriptors_to_import = hd_descriptors
             .iter()
@@ -659,7 +667,7 @@ impl Wallet {
             .map(|d| {
                 json!(
                 {"desc": d,
-                "range": INITIAL_ADDRESS_IMPORT_COUNT-1})
+                "range": self.initial_address_import_count-1})
             })
             .chain(swapcoin_descriptors_to_import.iter().map(|d| json!(d)))
             .collect::<Vec<Value>>();

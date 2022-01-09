@@ -1,0 +1,451 @@
+extern crate bitcoin;
+extern crate bitcoin_wallet;
+extern crate bitcoincore_rpc;
+
+use dirs::home_dir;
+use std::io;
+use std::iter::repeat;
+use std::path::PathBuf;
+use std::sync::{Arc, Once, RwLock};
+
+use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
+use bitcoin::Amount;
+use bitcoin_wallet::mnemonic;
+use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
+
+pub mod wallet_sync;
+use wallet_sync::{Wallet, WalletSyncAddressAmount};
+
+pub mod contracts;
+use contracts::{read_locktime_from_contract, SwapCoin};
+
+pub mod error;
+pub mod maker_protocol;
+pub mod messages;
+pub mod offerbook_sync;
+pub mod taker_protocol;
+pub mod watchtower_client;
+pub mod watchtower_protocol;
+
+static INIT: Once = Once::new();
+
+/// Setup function that will only run once, even if called multiple times.
+pub fn setup_logger() {
+    INIT.call_once(|| {
+        env_logger::Builder::from_env(
+            env_logger::Env::default()
+                .default_filter_or("teleport=info,main=info")
+                .default_write_style_or("always"),
+        )
+        .init();
+    });
+}
+
+pub fn get_bitcoin_rpc() -> Result<Client, Error> {
+    //TODO put all this in a config file
+    const RPC_CREDENTIALS: Option<(&str, &str)> = Some(("regtestrpcuser", "regtestrpcpass"));
+    //Some(("btcrpcuser", "btcrpcpass"));
+    //None; // use Bitcoin Core cookie-based authentication
+
+    let auth = match RPC_CREDENTIALS {
+        Some((user, pass)) => Auth::UserPass(user.to_string(), pass.to_string()),
+        None => {
+            //TODO this currently only works for Linux and regtest,
+            //     also support other OSes (Windows, MacOS...) and networks
+            let data_dir = home_dir().unwrap().join(".bitcoin");
+            Auth::CookieFile(data_dir.join("regtest").join(".cookie"))
+        }
+    };
+    let rpc = Client::new(
+        "http://localhost:18443/wallet/teleport"
+            //"http://localhost:18332/wallet/teleport"
+            .to_string(),
+        auth,
+    )?;
+    rpc.get_blockchain_info()?;
+    Ok(rpc)
+}
+
+pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return Ok(());
+        }
+    };
+
+    println!("input seed phrase extension (or leave blank for none): ");
+    let mut extension = String::new();
+    io::stdin().read_line(&mut extension)?;
+    extension = extension.trim().to_string();
+
+    let mnemonic =
+        mnemonic::Mnemonic::new_random(bitcoin_wallet::account::MasterKeyEntropy::Sufficient)
+            .unwrap();
+
+    println!("Write down this seed phrase =\n{}", mnemonic.to_string());
+
+    if !extension.trim().is_empty() {
+        println!("And this extension =\n\"{}\"", extension);
+    }
+
+    println!(
+        "\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
+        The teleport wallet file is needed to backup swapcoins"
+    );
+
+    Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension).unwrap();
+
+    let w = match Wallet::load_wallet_from_file(&wallet_file_name, WalletSyncAddressAmount::Normal)
+    {
+        Ok(w) => w,
+        Err(error) => panic!("error loading wallet file: {:?}", error),
+    };
+    println!("Importing addresses into Core. . .");
+    w.import_initial_addresses(
+        &rpc,
+        &w.get_hd_wallet_descriptors(&rpc)
+            .unwrap()
+            .iter()
+            .collect::<Vec<&String>>(),
+        &Vec::<_>::new(),
+    )
+    .unwrap();
+    Ok(())
+}
+
+pub fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
+    println!("input seed phrase: ");
+    let mut seed_phrase = String::new();
+    io::stdin().read_line(&mut seed_phrase)?;
+    seed_phrase = seed_phrase.trim().to_string();
+
+    if let Err(e) = mnemonic::Mnemonic::from_str(&seed_phrase) {
+        println!("invalid seed phrase: {:?}", e);
+        return Ok(());
+    }
+
+    println!("input seed phrase extension (or leave blank for none): ");
+    let mut extension = String::new();
+    io::stdin().read_line(&mut extension)?;
+    extension = extension.trim().to_string();
+
+    Wallet::save_new_wallet_file(&wallet_file_name, seed_phrase, extension).unwrap();
+    Ok(())
+}
+
+pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
+    let mut wallet =
+        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
+            Ok(w) => w,
+            Err(error) => {
+                log::error!(target: "main", "error loading wallet file: {:?}", error);
+                return;
+            }
+        };
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+
+    let long_form = long_form.unwrap_or(false);
+
+    let mut utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
+    utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
+    let utxo_count = utxos.len();
+    let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+    println!("= spendable wallet balance =");
+    println!(
+        "{:16} {:24} {:^8} {:<7} value",
+        "coin", "address", "type", "conf",
+    );
+    for utxo in utxos {
+        let txid = utxo.txid.to_hex();
+        let addr = utxo.address.unwrap().to_string();
+        #[rustfmt::skip]
+        println!(
+            "{}{}{}:{} {}{}{} {:^8} {:<7} {}",
+            if long_form { &txid } else {&txid[0..6] },
+            if long_form { "" } else { ".." },
+            if long_form { &"" } else { &txid[58..64] },
+            utxo.vout,
+            if long_form { &addr } else { &addr[0..10] },
+            if long_form { "" } else { "...." },
+            if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
+            if utxo.witness_script.is_some() {
+                "swapcoin"
+            } else {
+                if utxo.descriptor.is_some() { "seed" } else { "timelock" }
+            },
+            utxo.confirmations,
+            utxo.amount
+        );
+    }
+    println!("coin count = {}", utxo_count);
+    println!("total balance = {}", balance);
+
+    let incomplete_coinswaps = wallet.find_incomplete_coinswaps(&rpc).unwrap();
+    if !incomplete_coinswaps.is_empty() {
+        println!("= incomplete coinswaps =");
+        for (hashvalue, (utxo_incoming_swapcoins, utxo_outgoing_swapcoins)) in incomplete_coinswaps
+        {
+            let balance: Amount = utxo_incoming_swapcoins
+                .iter()
+                .map(|(l, i)| (l, (*i as &dyn SwapCoin)))
+                .chain(
+                    utxo_outgoing_swapcoins
+                        .iter()
+                        .map(|(l, o)| (l, (*o as &dyn SwapCoin))),
+                )
+                .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
+            println!(
+                "{:16} {:8} {:8} {:<15} {:<7} value",
+                "coin", "type", "preimage", "locktime/blocks", "conf",
+            );
+
+            for ((utxo, swapcoin), contract_type) in utxo_incoming_swapcoins
+                .iter()
+                .map(|(l, i)| (l, (*i as &dyn SwapCoin)))
+                .zip(repeat("hashlock"))
+                .chain(
+                    utxo_outgoing_swapcoins
+                        .iter()
+                        .map(|(l, o)| (l, (*o as &dyn SwapCoin)))
+                        .zip(repeat("timelock")),
+                )
+            {
+                let txid = utxo.txid.to_hex();
+
+                #[rustfmt::skip]
+                println!("{}{}{}:{} {:8} {:8} {:^15} {:<7} {}",
+                    if long_form { &txid } else {&txid[0..6] },
+                    if long_form { "" } else { ".." },
+                    if long_form { &"" } else { &txid[58..64] },
+                    utxo.vout,
+                    contract_type,
+                    if swapcoin.is_hash_preimage_known() { "known" } else { "unknown" },
+                    read_locktime_from_contract(&swapcoin.get_contract_redeemscript())
+                        .expect("unable to read locktime from contract"),
+                    utxo.confirmations,
+                    utxo.amount
+                );
+            }
+            println!(
+                "hashvalue = {}\ntotal balance = {}",
+                &hashvalue.to_hex()[..],
+                balance
+            );
+        }
+    }
+
+    let (_incoming_contract_utxos, mut outgoing_contract_utxos) =
+        wallet.find_live_contract_unspents(&rpc).unwrap();
+    if !outgoing_contract_utxos.is_empty() {
+        outgoing_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
+        println!("= live timelocked contracts =");
+        println!(
+            "{:16} {:8} {:<7} {:<8} {:6}",
+            "coin", "timelock", "conf", "locked?", "value"
+        );
+        for (outgoing_swapcoin, utxo) in outgoing_contract_utxos {
+            let txid = utxo.txid.to_hex();
+            let timelock =
+                read_locktime_from_contract(&outgoing_swapcoin.contract_redeemscript).unwrap();
+            #[rustfmt::skip]
+            println!("{}{}{}:{} {:<8} {:<7} {:<8} {}",
+                if long_form { &txid } else {&txid[0..6] },
+                if long_form { "" } else { ".." },
+                if long_form { &"" } else { &txid[58..64] },
+                utxo.vout,
+                timelock,
+                utxo.confirmations,
+                if utxo.confirmations >= timelock.into() { "unlocked" } else { "locked" },
+                utxo.amount
+            );
+        }
+    }
+}
+
+pub fn display_wallet_keys(wallet_file_name: &PathBuf) {
+    let wallet =
+        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
+            Ok(w) => w,
+            Err(error) => {
+                log::error!(target: "main", "error loading wallet file: {:?}", error);
+                return;
+            }
+        };
+    wallet.print_wallet_key_data();
+}
+
+pub fn print_receive_invoice(wallet_file_name: &PathBuf) {
+    let mut wallet =
+        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
+            Ok(w) => w,
+            Err(error) => {
+                log::error!(target: "main", "error loading wallet file: {:?}", error);
+                return;
+            }
+        };
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+
+    let addr = match wallet.get_next_external_address(&rpc) {
+        Ok(a) => a,
+        Err(error) => {
+            println!("error: {:?}", error);
+            return;
+        }
+    };
+    println!("{}", addr);
+}
+
+pub fn run_maker(
+    wallet_file_name: &PathBuf,
+    sync_amount: WalletSyncAddressAmount,
+    port: u16,
+    special_behavior: Option<String>,
+    kill_flag: Option<Arc<RwLock<bool>>>,
+) {
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name, sync_amount) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+
+    let rpc_ptr = Arc::new(rpc);
+    let wallet_ptr = Arc::new(RwLock::new(wallet));
+    let config = maker_protocol::MakerConfig {
+        port,
+        rpc_ping_interval: 30,
+        watchtower_ping_interval: 300,
+        maker_behavior: match special_behavior.unwrap_or(String::new()).as_str() {
+            "closeonsignsenderscontracttx" => {
+                maker_protocol::MakerBehavior::CloseOnSignSendersContractTx
+            }
+            _ => maker_protocol::MakerBehavior::Normal,
+        },
+        kill_flag: if kill_flag.is_none() {
+            Arc::new(RwLock::new(false))
+        } else {
+            kill_flag.unwrap().clone()
+        },
+    };
+    maker_protocol::start_maker(rpc_ptr, wallet_ptr, config);
+}
+
+pub fn run_taker(wallet_file_name: &PathBuf, sync_amount: WalletSyncAddressAmount) {
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name, sync_amount) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+    taker_protocol::start_taker(&rpc, &mut wallet);
+}
+
+pub fn recover_from_incomplete_coinswap(
+    wallet_file_name: &PathBuf,
+    hashvalue: Hash160,
+    dont_broadcast: bool,
+) {
+    let mut wallet =
+        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
+            Ok(w) => w,
+            Err(error) => {
+                log::error!(target: "main", "error loading wallet file: {:?}", error);
+                return;
+            }
+        };
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+
+    let incomplete_coinswaps = wallet.find_incomplete_coinswaps(&rpc).unwrap();
+    let incomplete_coinswap = incomplete_coinswaps.get(&hashvalue);
+    if incomplete_coinswap.is_none() {
+        log::error!(target: "main", "hashvalue not refering to incomplete coinswap, run \
+                `wallet-balance` to see list of incomplete coinswaps");
+        return;
+    }
+    let incomplete_coinswap = incomplete_coinswap.unwrap();
+
+    for (ii, outgoing_swapcoin) in incomplete_coinswap.1.iter().enumerate() {
+        wallet
+            .import_redeemscript(
+                &rpc,
+                &outgoing_swapcoin.1.contract_redeemscript,
+                wallet_sync::CoreAddressLabelType::Wallet,
+            )
+            .unwrap();
+
+        let signed_contract_tx = outgoing_swapcoin.1.get_fully_signed_contract_tx();
+        if dont_broadcast {
+            let txhex = bitcoin::consensus::encode::serialize_hex(&signed_contract_tx);
+            println!("contract_tx_{} = \n{}", ii, txhex);
+            let accepted = rpc
+                .test_mempool_accept(&[txhex.clone()])
+                .unwrap()
+                .iter()
+                .any(|tma| tma.allowed);
+            assert!(accepted);
+        } else {
+            let txid = rpc.send_raw_transaction(&signed_contract_tx).unwrap();
+            println!("broadcasted {}", txid);
+        }
+    }
+}
+
+pub fn run_watchtower(kill_flag: Option<Arc<RwLock<bool>>>) {
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+
+    watchtower_protocol::start_watchtower(
+        &rpc,
+        if kill_flag.is_none() {
+            Arc::new(RwLock::new(false))
+        } else {
+            kill_flag.unwrap().clone()
+        },
+    );
+}

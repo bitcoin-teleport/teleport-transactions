@@ -41,12 +41,13 @@ pub enum MakerBehavior {
     CloseOnSignSendersContractTx,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MakerConfig {
     pub port: u16,
     pub rpc_ping_interval: u64,
     pub watchtower_ping_interval: u64,
     pub maker_behavior: MakerBehavior,
+    pub kill_flag: Arc<RwLock<bool>>,
 }
 
 #[tokio::main]
@@ -99,6 +100,9 @@ async fn run(
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
     let mut last_watchtowers_ping = Instant::now();
+
+    let my_kill_flag = config.kill_flag.clone();
+
     loop {
         let (mut socket, addr) = select! {
             new_client = listener.accept() => new_client?,
@@ -129,6 +133,9 @@ async fn run(
                 };
                 log::debug!("Ping: RPC = {}{}", rpc_ping_success, debug_msg);
                 accepting_clients = rpc_ping_success && watchtowers_ping_success;
+                if *my_kill_flag.read().unwrap() {
+                    break Err(Error::Protocol("kill flag is true"));
+                }
                 continue;
             },
         };
@@ -146,6 +153,7 @@ async fn run(
         let client_rpc = Arc::clone(&rpc);
         let client_wallet = Arc::clone(&wallet);
         let server_loop_comms_tx = server_loop_comms_tx.clone();
+        let maker_behavior = config.maker_behavior;
 
         tokio::spawn(async move {
             let (socket_reader, mut socket_writer) = socket.split();
@@ -184,15 +192,6 @@ async fn run(
                         break;
                     }
                 };
-                #[cfg(test)]
-                if line == "kill".to_string() {
-                    server_loop_comms_tx
-                        .send(Error::Protocol("kill signal"))
-                        .await
-                        .unwrap();
-                    log::info!("Kill signal received, stopping maker....");
-                    break;
-                }
 
                 line = line.trim_end().to_string();
                 let message_result = handle_message(
@@ -201,7 +200,7 @@ async fn run(
                     Arc::clone(&client_rpc),
                     Arc::clone(&client_wallet),
                     addr,
-                    config.maker_behavior,
+                    maker_behavior,
                 )
                 .await;
                 match message_result {
