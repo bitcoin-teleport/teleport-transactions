@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 use teleport;
+use teleport::maker_protocol::MakerBehavior;
 use teleport::wallet_sync::WalletSyncAddressAmount;
 use teleport::watchtower_client::ContractInfo;
 
@@ -95,11 +96,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             port,
             special_behavior,
         } => {
+            let maker_special_behavior = match special_behavior.unwrap_or(String::new()).as_str() {
+                "closeonsignsenderscontracttx" => MakerBehavior::CloseOnSignSendersContractTx,
+                _ => MakerBehavior::Normal,
+            };
             teleport::run_maker(
                 &args.wallet_file_name,
                 WalletSyncAddressAmount::Normal,
                 port.unwrap_or(6102),
-                special_behavior,
+                maker_special_behavior,
                 None,
             );
         }

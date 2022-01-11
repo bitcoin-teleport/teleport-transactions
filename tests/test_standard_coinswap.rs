@@ -2,6 +2,7 @@ use bitcoin::util::amount::Amount;
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Client, RpcApi};
 
+use teleport::maker_protocol::MakerBehavior;
 use teleport::wallet_sync::{Wallet, WalletSyncAddressAmount};
 
 use serde_json::Value;
@@ -151,7 +152,7 @@ async fn test_standard_coinswap() {
             &PathBuf::from_str(MAKER1).unwrap(),
             WalletSyncAddressAmount::Testing,
             6102,
-            None,
+            MakerBehavior::Normal,
             Some(kill_flag_maker1),
         );
     });
@@ -162,7 +163,7 @@ async fn test_standard_coinswap() {
             &PathBuf::from_str(MAKER2).unwrap(),
             WalletSyncAddressAmount::Testing,
             16102,
-            None,
+            MakerBehavior::Normal,
             Some(kill_flag_maker2),
         );
     });

@@ -19,8 +19,10 @@ use wallet_sync::{Wallet, WalletSyncAddressAmount};
 pub mod contracts;
 use contracts::{read_locktime_from_contract, SwapCoin};
 
-pub mod error;
 pub mod maker_protocol;
+use maker_protocol::MakerBehavior;
+
+pub mod error;
 pub mod messages;
 pub mod offerbook_sync;
 pub mod taker_protocol;
@@ -315,7 +317,7 @@ pub fn run_maker(
     wallet_file_name: &PathBuf,
     sync_amount: WalletSyncAddressAmount,
     port: u16,
-    special_behavior: Option<String>,
+    maker_behavior: MakerBehavior,
     kill_flag: Option<Arc<RwLock<bool>>>,
 ) {
     let rpc = match get_bitcoin_rpc() {
@@ -340,12 +342,7 @@ pub fn run_maker(
         port,
         rpc_ping_interval: 30,
         watchtower_ping_interval: 300,
-        maker_behavior: match special_behavior.unwrap_or(String::new()).as_str() {
-            "closeonsignsenderscontracttx" => {
-                maker_protocol::MakerBehavior::CloseOnSignSendersContractTx
-            }
-            _ => maker_protocol::MakerBehavior::Normal,
-        },
+        maker_behavior,
         kill_flag: if kill_flag.is_none() {
             Arc::new(RwLock::new(false))
         } else {
