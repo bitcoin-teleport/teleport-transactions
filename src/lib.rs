@@ -34,7 +34,7 @@ pub fn setup_logger() {
     INIT.call_once(|| {
         env_logger::Builder::from_env(
             env_logger::Env::default()
-                .default_filter_or("teleport=info,main=info")
+                .default_filter_or("teleport=info,main=info,wallet=info")
                 .default_write_style_or("always"),
         )
         .init();

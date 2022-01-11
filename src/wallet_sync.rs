@@ -372,6 +372,11 @@ impl Wallet {
             .to_seed(Some(&wallet_file_data.extension));
         let xprv = ExtendedPrivKey::new_master(NETWORK, &seed.0).unwrap();
 
+        log::debug!(target: "wallet",
+            "loaded wallet file, external_index={} incoming_swap_coins={} outgoing_swap_coins={}",
+            wallet_file_data.external_index,
+            wallet_file_data.incoming_swap_coins.len(), wallet_file_data.outgoing_swap_coins.len());
+
         let wallet = Wallet {
             master_key: xprv,
             wallet_file_name,
@@ -654,7 +659,7 @@ impl Wallet {
             return Ok(());
         }
 
-        log::trace!(target: "wallet", "new wallet detected, synchronizing balance...");
+        log::info!(target: "wallet", "New wallet detected, synchronizing balance...");
         self.import_initial_addresses(
             rpc,
             &hd_descriptors_to_import,
@@ -950,7 +955,7 @@ impl Wallet {
         }
         let addr_type = path_chunks[1].parse::<u32>();
         if addr_type.is_err() {
-            log::trace!(target: "wallet", "unexpected address_type = {}", path);
+            log::debug!(target: "wallet", "unexpected address_type = {}", path);
             return None;
         }
         let index = path_chunks[2].parse::<i32>();
@@ -1157,7 +1162,7 @@ impl Wallet {
             output_values.iter(),
             change_addresses.iter()
         ) {
-            log::trace!(target: "wallet", "output_value = {} to addr={}", output_value, address);
+            log::debug!(target: "wallet", "output_value = {} to addr={}", output_value, address);
 
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
@@ -1220,7 +1225,7 @@ impl Wallet {
             };
             self.sign_transaction(&mut spending_tx, &decoded_psbt);
 
-            log::trace!(target: "wallet",
+            log::debug!(target: "wallet",
                 "txhex = {}",
                 bitcoin::consensus::encode::serialize_hex(&spending_tx)
             );
@@ -1344,7 +1349,7 @@ impl Wallet {
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
             .unzip();
-        log::trace!(target: "wallet", "coinswap_addresses = {:#?}", coinswap_addresses);
+        log::debug!(target: "wallet", "coinswap_addresses = {:#?}", coinswap_addresses);
 
         let (my_funding_txes, utxo_indexes, funding_amounts) =
             self.create_spending_txes(rpc, total_coinswap_amount, &coinswap_addresses)?;
