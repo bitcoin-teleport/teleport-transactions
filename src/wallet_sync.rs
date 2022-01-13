@@ -95,6 +95,19 @@ pub enum CoreAddressLabelType {
 }
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
+//data needed to find information  in addition to ListUnspentResultEntry
+//about a UTXO required to spend it
+#[derive(Debug, Clone)]
+pub enum UTXOSpendInfo {
+    SeedUTXO { path: String },
+    SwapCoin {
+        multisig_redeemscript: Script,
+    },
+    TimelockContract {
+        swapcoin_multisig_redeemscript: Script,
+    },
+}
+
 pub enum SignTransactionInputInfo {
     SeedCoin { path: String, input_value: u64 },
     SwapCoin { multisig_redeemscript: Script },
@@ -720,50 +733,70 @@ impl Wallet {
             .collect::<HashMap<Script, &OutgoingSwapCoin>>()
     }
 
-    fn is_utxo_ours_and_spendable(
+    fn is_utxo_ours_and_spendable_get_pointer(
         &self,
         u: &ListUnspentResultEntry,
         contract_scriptpubkeys_outgoing_swapcoins: &HashMap<Script, &OutgoingSwapCoin>,
-    ) -> bool {
+    ) -> Option<UTXOSpendInfo> {
         if u.descriptor.is_none() {
             let swapcoin = contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key);
             if swapcoin.is_none() {
-                return false;
+                return None;
             }
             let swapcoin = swapcoin.unwrap();
             let timelock = read_locktime_from_contract(&swapcoin.contract_redeemscript);
             if timelock.is_none() {
-                return false;
+                return None;
             }
             let timelock = timelock.unwrap();
-            return u.confirmations >= timelock.into();
+            return if u.confirmations >= timelock.into() {
+                Some(UTXOSpendInfo::TimelockContract {
+                    swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+                })
+            } else {
+                None
+            };
         }
         let descriptor = u.descriptor.as_ref().unwrap();
-        if let Some(ret) = self.get_hd_path_from_descriptor(&descriptor) {
+        if let Some(ret) = get_hd_path_from_descriptor(&descriptor) {
             //utxo is in a hd wallet
-            let (fingerprint, _, _) = ret;
+            let (fingerprint, addr_type, index) = ret;
 
             let secp = Secp256k1::new();
             let master_private_key = self
                 .master_key
                 .derive_priv(&secp, &DerivationPath::from_str(DERIVATION_PATH).unwrap())
                 .unwrap();
-            fingerprint == master_private_key.fingerprint(&secp).to_string()
+            if fingerprint == master_private_key.fingerprint(&secp).to_string() {
+                Some(UTXOSpendInfo::SeedUTXO {
+                    path: format!("m/{}/{}", addr_type, index)
+                })
+            } else {
+                None
+            }
         } else {
             //utxo might be one of our swapcoins
-            self.find_incoming_swapcoin(
-                u.witness_script
-                    .as_ref()
-                    .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
-            )
-            .map_or(false, |sc| sc.other_privkey.is_some())
+            let found = self
+                .find_incoming_swapcoin(
+                    u.witness_script
+                        .as_ref()
+                        .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
+                )
+                .map_or(false, |sc| sc.other_privkey.is_some())
                 || self
                     .find_outgoing_swapcoin(
                         u.witness_script
                             .as_ref()
                             .unwrap_or(&Script::from(Vec::from_hex("").unwrap())),
                     )
-                    .map_or(false, |sc| sc.hash_preimage.is_some())
+                    .map_or(false, |sc| sc.hash_preimage.is_some());
+            if found {
+                Some(UTXOSpendInfo::SwapCoin {
+                    multisig_redeemscript: u.witness_script.as_ref().unwrap().clone(),
+                })
+            } else {
+                None
+            }
         }
     }
 
@@ -778,7 +811,11 @@ impl Wallet {
         let utxos_to_lock = &all_unspents
             .into_iter()
             .filter(|u| {
-                !self.is_utxo_ours_and_spendable(u, &contract_scriptpubkeys_outgoing_swapcoins)
+                self.is_utxo_ours_and_spendable_get_pointer(
+                    u,
+                    &contract_scriptpubkeys_outgoing_swapcoins,
+                )
+                .is_none()
             })
             .map(|u| OutPoint {
                 txid: u.txid,
@@ -792,7 +829,7 @@ impl Wallet {
     pub fn list_unspent_from_wallet(
         &self,
         rpc: &Client,
-    ) -> Result<Vec<ListUnspentResultEntry>, Error> {
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, Error> {
         let contract_scriptpubkeys_outgoing_swapcoins =
             self.create_contract_scriptpubkey_swapcoin_hashmap();
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
@@ -800,11 +837,18 @@ impl Wallet {
         Ok(rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?
             .iter()
-            .filter(|u| {
-                self.is_utxo_ours_and_spendable(u, &contract_scriptpubkeys_outgoing_swapcoins)
+            .map(|u| {
+                (
+                    u,
+                    self.is_utxo_ours_and_spendable_get_pointer(
+                        u,
+                        &contract_scriptpubkeys_outgoing_swapcoins,
+                    ),
+                )
             })
-            .cloned()
-            .collect::<Vec<ListUnspentResultEntry>>())
+            .filter(|(_u, o_info)| o_info.is_some())
+            .map(|(u, o_info)| (u.clone(), o_info.unwrap()))
+            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>())
     }
 
     pub fn find_incomplete_coinswaps(
@@ -941,45 +985,16 @@ impl Wallet {
         ))
     }
 
-    // returns None if not a hd descriptor (but possibly a swapcoin (multisig) descriptor instead)
-    fn get_hd_path_from_descriptor<'a>(&self, descriptor: &'a str) -> Option<(&'a str, u32, i32)> {
-        //e.g
-        //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
-        let open = descriptor.find('[');
-        let close = descriptor.find(']');
-        if open.is_none() || close.is_none() {
-            //unexpected, so printing it to stdout
-            println!("unknown descriptor = {}", descriptor);
-            return None;
-        }
-        let path = &descriptor[open.unwrap() + 1..close.unwrap()];
-        let path_chunks: Vec<&str> = path.split('/').collect();
-        if path_chunks.len() != 3 {
-            return None;
-            //unexpected descriptor = wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q
-        }
-        let addr_type = path_chunks[1].parse::<u32>();
-        if addr_type.is_err() {
-            log::debug!(target: "wallet", "unexpected address_type = {}", path);
-            return None;
-        }
-        let index = path_chunks[2].parse::<i32>();
-        if index.is_err() {
-            return None;
-        }
-        Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
-    }
-
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> Result<u32, Error> {
         let mut max_index: i32 = -1;
         //TODO error handling
         let utxos = self.list_unspent_from_wallet(rpc)?;
-        for utxo in utxos {
+        for (utxo, _) in utxos {
             if utxo.descriptor.is_none() {
                 continue;
             }
             let descriptor = utxo.descriptor.unwrap();
-            let ret = self.get_hd_path_from_descriptor(&descriptor);
+            let ret = get_hd_path_from_descriptor(&descriptor);
             if ret.is_none() {
                 continue;
             }
@@ -1003,9 +1018,22 @@ impl Wallet {
         Ok(receive_address)
     }
 
+    pub fn get_next_internal_addresses(
+        &self,
+        rpc: &Client,
+        count: u32,
+    ) -> Result<Vec<Address>, Error> {
+        let next_change_addr_index = self.find_hd_next_index(rpc, 1)?;
+        let change_branch_descriptor = &self.get_hd_wallet_descriptors(rpc)?[1];
+        Ok(rpc.derive_addresses(
+            change_branch_descriptor,
+            Some([next_change_addr_index, next_change_addr_index + count]),
+        )?)
+    }
+
     pub fn get_offer_maxsize(&self, rpc: Arc<Client>) -> Result<u64, Error> {
         let utxos = self.list_unspent_from_wallet(&rpc)?;
-        let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+        let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
         Ok(balance.as_sat())
     }
 
@@ -1117,17 +1145,7 @@ impl Wallet {
         //  walletcreatefundedpsbt to create funding txes that create change
         //this is the solution used right now
 
-        let next_change_addr_index = self.find_hd_next_index(rpc, 1)?;
-        let change_branch_descriptor = &self.get_hd_wallet_descriptors(rpc)?[1];
-        let change_addresses = rpc
-            .derive_addresses(
-                change_branch_descriptor,
-                Some([
-                    next_change_addr_index,
-                    next_change_addr_index + destinations.len() as u32,
-                ]),
-            )
-            .unwrap();
+        let change_addresses = self.get_next_internal_addresses(rpc, destinations.len() as u32)?;
 
         self.lock_all_nonwallet_unspents(rpc)?;
         let mut output_values = Wallet::generate_amount_fractions(
@@ -1483,3 +1501,33 @@ fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
         .parse::<u64>()
         .unwrap()
 }
+
+// returns None if not a hd descriptor (but possibly a swapcoin (multisig) descriptor instead)
+fn get_hd_path_from_descriptor<'a>(descriptor: &'a str) -> Option<(&'a str, u32, i32)> {
+    //e.g
+    //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
+    let open = descriptor.find('[');
+    let close = descriptor.find(']');
+    if open.is_none() || close.is_none() {
+        //unexpected, so printing it to stdout
+        println!("unknown descriptor = {}", descriptor);
+        return None;
+    }
+    let path = &descriptor[open.unwrap() + 1..close.unwrap()];
+    let path_chunks: Vec<&str> = path.split('/').collect();
+    if path_chunks.len() != 3 {
+        return None;
+        //unexpected descriptor = wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q
+    }
+    let addr_type = path_chunks[1].parse::<u32>();
+    if addr_type.is_err() {
+        log::debug!(target: "wallet", "unexpected address_type = {}", path);
+        return None;
+    }
+    let index = path_chunks[2].parse::<i32>();
+    if index.is_err() {
+        return None;
+    }
+    Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
+}
+

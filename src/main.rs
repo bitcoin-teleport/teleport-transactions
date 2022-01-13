@@ -7,6 +7,7 @@ use structopt::StructOpt;
 
 use teleport;
 use teleport::maker_protocol::MakerBehavior;
+use teleport::wallet_direct_send::{CoinToSpend, Destination, SendAmount};
 use teleport::wallet_sync::WalletSyncAddressAmount;
 use teleport::watchtower_client::ContractInfo;
 
@@ -16,6 +17,11 @@ struct ArgsWithWalletFile {
     /// Wallet file
     #[structopt(default_value = "wallet.teleport", parse(from_os_str), long)]
     wallet_file_name: PathBuf,
+
+    /// Dont broadcast transactions, only output their transaction hex string
+    /// Only for commands which involve sending transactions e.g. recover-from-incomplete-coinswap
+    #[structopt(short, long)]
+    dont_broadcast: bool,
 
     /// Subcommand
     #[structopt(flatten)]
@@ -59,8 +65,17 @@ enum Subcommand {
     RecoverFromIncompleteCoinswap {
         /// Hashvalue as hex string which uniquely identifies the coinswap
         hashvalue: Hash160,
-        /// Dont broadcast transactions, only output their transaction hex string
-        dont_broadcast: Option<bool>,
+    },
+
+    /// Send a transaction from the wallet
+    DirectSend {
+        /// Amount to send (in sats), or "sweep" for sweep
+        send_amount: SendAmount,
+        /// Address to send coins to, or "wallet" to send back to own wallet
+        destination: Destination,
+        /// Coins to spend as inputs, either in long form "<txid>:vout" or short
+        /// form "txid-prefix..txid-suffix:vout"
+        coins_to_spend: Vec<CoinToSpend>,
     },
 
     /// Run watchtower
@@ -111,14 +126,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::CoinswapSend => {
             teleport::run_taker(&args.wallet_file_name, WalletSyncAddressAmount::Normal);
         }
-        Subcommand::RecoverFromIncompleteCoinswap {
-            hashvalue,
-            dont_broadcast,
-        } => {
+        Subcommand::RecoverFromIncompleteCoinswap { hashvalue } => {
             teleport::recover_from_incomplete_coinswap(
                 &args.wallet_file_name,
                 hashvalue,
-                dont_broadcast.unwrap_or(false),
+                args.dont_broadcast,
+            );
+        }
+        Subcommand::DirectSend {
+            send_amount,
+            destination,
+            coins_to_spend,
+        } => {
+            teleport::direct_send(
+                &args.wallet_file_name,
+                send_amount,
+                destination,
+                &coins_to_spend,
+                args.dont_broadcast,
             );
         }
         Subcommand::RunWatchtower => {

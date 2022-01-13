@@ -16,6 +16,9 @@ use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 pub mod wallet_sync;
 use wallet_sync::{Wallet, WalletSyncAddressAmount};
 
+pub mod wallet_direct_send;
+use wallet_direct_send::{CoinToSpend, Destination, SendAmount};
+
 pub mod contracts;
 use contracts::{read_locktime_from_contract, SwapCoin};
 
@@ -158,15 +161,15 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
     let long_form = long_form.unwrap_or(false);
 
     let mut utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
-    utxos.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
+    utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
-    let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.amount);
+    let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
     println!("= spendable wallet balance =");
     println!(
         "{:16} {:24} {:^8} {:<7} value",
         "coin", "address", "type", "conf",
     );
-    for utxo in utxos {
+    for (utxo, _) in utxos {
         let txid = utxo.txid.to_hex();
         let addr = utxo.address.unwrap().to_string();
         #[rustfmt::skip]
@@ -425,6 +428,47 @@ pub fn recover_from_incomplete_coinswap(
             let txid = rpc.send_raw_transaction(&signed_contract_tx).unwrap();
             println!("broadcasted {}", txid);
         }
+    }
+}
+
+pub fn direct_send(
+    wallet_file_name: &PathBuf,
+    send_amount: SendAmount,
+    destination: Destination,
+    coins_to_spend: &[CoinToSpend],
+    dont_broadcast: bool,
+) {
+    let rpc = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet =
+        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
+            Ok(w) => w,
+            Err(error) => {
+                log::error!(target: "main", "error loading wallet file: {:?}", error);
+                return;
+            }
+        };
+    wallet.startup_sync(&rpc).unwrap();
+    let tx = wallet
+        .create_direct_send(&rpc, send_amount, destination, coins_to_spend)
+        .unwrap();
+    if dont_broadcast {
+        let txhex = bitcoin::consensus::encode::serialize_hex(&tx);
+        let accepted = rpc
+            .test_mempool_accept(&[txhex.clone()])
+            .unwrap()
+            .iter()
+            .any(|tma| tma.allowed);
+        assert!(accepted);
+        println!("tx = \n{}", txhex);
+    } else {
+        let txid = rpc.send_raw_transaction(&tx).unwrap();
+        println!("broadcasted {}", txid);
     }
 }
 
