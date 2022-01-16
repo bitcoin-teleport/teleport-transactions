@@ -108,6 +108,7 @@ pub enum UTXOSpendInfo {
     },
     TimelockContract {
         swapcoin_multisig_redeemscript: Script,
+        input_value: u64,
     },
 }
 
@@ -268,6 +269,31 @@ impl OutgoingSwapCoin {
             &multisig_redeemscript,
         );
         signed_contract_tx
+    }
+
+    fn sign_timelocked_transaction_input(
+        &self,
+        index: usize,
+        tx: &Transaction,
+        input: &mut TxIn,
+        input_value: u64,
+    ) {
+        let secp = Secp256k1::new();
+        let sighash = secp256k1::Message::from_slice(
+            &SigHashCache::new(tx).signature_hash(
+                index,
+                &self.contract_redeemscript,
+                input_value,
+                SigHashType::All,
+            )[..],
+        )
+        .unwrap();
+
+        let sig_timelock = secp.sign(&sighash, &self.timelock_privkey);
+        input.witness.push(sig_timelock.serialize_der().to_vec());
+        input.witness[0].push(SigHashType::All as u8);
+        input.witness.push(Vec::new());
+        input.witness.push(self.contract_redeemscript.to_bytes());
     }
 }
 
@@ -750,6 +776,7 @@ impl Wallet {
             return if u.confirmations >= timelock.into() {
                 Some(UTXOSpendInfo::TimelockContract {
                     swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+                    input_value: u.amount.as_sat(),
                 })
             } else {
                 None
@@ -1094,10 +1121,12 @@ impl Wallet {
                     input.witness.push(pubkey.to_bytes());
                 }
                 UTXOSpendInfo::TimelockContract {
-                    swapcoin_multisig_redeemscript: _,
-                } => {
-                    panic!("not implemented yet");
-                }
+                    swapcoin_multisig_redeemscript,
+                    input_value,
+                } => self
+                    .find_outgoing_swapcoin(&swapcoin_multisig_redeemscript)
+                    .unwrap()
+                    .sign_timelocked_transaction_input(ix, &tx_clone, &mut input, input_value),
             }
         }
     }

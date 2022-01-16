@@ -6,6 +6,7 @@ use bitcoin::{Address, Amount, OutPoint, Script, Transaction, TxIn, TxOut};
 use bitcoincore_rpc::json::ListUnspentResultEntry;
 use bitcoincore_rpc::Client;
 
+use crate::contracts::SwapCoin;
 use crate::error::Error;
 use crate::wallet_sync::{UTXOSpendInfo, Wallet, NETWORK};
 
@@ -139,9 +140,20 @@ impl Wallet {
                         }
                     }
                 };
+
+                let sequence = match spend_info {
+                    UTXOSpendInfo::TimelockContract {
+                        ref swapcoin_multisig_redeemscript,
+                        input_value: _,
+                    } => self
+                        .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
+                        .unwrap()
+                        .get_timelock() as u32,
+                    _ => 0,
+                };
                 tx_inputs.push(TxIn {
                     previous_output,
-                    sequence: 0,
+                    sequence,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 });
@@ -154,6 +166,7 @@ impl Wallet {
                 tx_inputs
             );
         }
+
         let dest_addr = match destination {
             Destination::Wallet => self.get_next_external_address(rpc)?,
             Destination::Address(a) => a,
