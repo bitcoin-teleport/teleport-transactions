@@ -7,7 +7,7 @@ use bitcoincore_rpc::json::ListUnspentResultEntry;
 use bitcoincore_rpc::Client;
 
 use crate::error::Error;
-use crate::wallet_sync::{UTXOSpendInfo, Wallet, NETWORK, SignTransactionInputInfo};
+use crate::wallet_sync::{UTXOSpendInfo, Wallet, NETWORK};
 
 #[derive(Debug)]
 pub enum SendAmount {
@@ -149,7 +149,10 @@ impl Wallet {
             }
         }
         if tx_inputs.len() != coins_to_spend.len() {
-            panic!("unable to find all given inputs, only found = {:?}", tx_inputs);
+            panic!(
+                "unable to find all given inputs, only found = {:?}",
+                tx_inputs
+            );
         }
         let dest_addr = match destination {
             Destination::Wallet => self.get_next_external_address(rpc)?,
@@ -185,29 +188,10 @@ impl Wallet {
             lock_time: 0,
             version: 2,
         };
-        self.sign_transaction(&mut tx, &mut unspent_inputs.iter()
-            .map(|(lure, usi)|
-                match usi {
-                    UTXOSpendInfo::SeedUTXO { path } => {
-                        SignTransactionInputInfo::SeedCoin {
-                            path: path.clone(),
-                            input_value: lure.amount.as_sat()
-                        }
-                    }
-                    UTXOSpendInfo::SwapCoin { multisig_redeemscript } => {
-                        SignTransactionInputInfo::SwapCoin {
-                            multisig_redeemscript: multisig_redeemscript.clone()
-                        }
-                    }
-                    UTXOSpendInfo::TimelockContract { swapcoin_multisig_redeemscript } => {
-                        panic!("not implemented yet");
-                    }
-                }
-            )
+        self.sign_transaction(
+            &mut tx,
+            &mut unspent_inputs.iter().map(|(_u, usi)| usi.clone()),
         );
-
-        println!("tx = {:?}", tx);
-
         Ok(tx)
     }
 }

@@ -99,18 +99,16 @@ const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 //about a UTXO required to spend it
 #[derive(Debug, Clone)]
 pub enum UTXOSpendInfo {
-    SeedUTXO { path: String },
+    SeedCoin {
+        path: String,
+        input_value: u64,
+    },
     SwapCoin {
         multisig_redeemscript: Script,
     },
     TimelockContract {
         swapcoin_multisig_redeemscript: Script,
     },
-}
-
-pub enum SignTransactionInputInfo {
-    SeedCoin { path: String, input_value: u64 },
-    SwapCoin { multisig_redeemscript: Script },
 }
 
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
@@ -768,8 +766,9 @@ impl Wallet {
                 .derive_priv(&secp, &DerivationPath::from_str(DERIVATION_PATH).unwrap())
                 .unwrap();
             if fingerprint == master_private_key.fingerprint(&secp).to_string() {
-                Some(UTXOSpendInfo::SeedUTXO {
-                    path: format!("m/{}/{}", addr_type, index)
+                Some(UTXOSpendInfo::SeedCoin {
+                    path: format!("m/{}/{}", addr_type, index),
+                    input_value: u.amount.as_sat(),
                 })
             } else {
                 None
@@ -1050,7 +1049,7 @@ impl Wallet {
     pub fn sign_transaction(
         &self,
         spending_tx: &mut Transaction,
-        inputs_info: &mut dyn Iterator<Item = SignTransactionInputInfo>,
+        inputs_info: &mut dyn Iterator<Item = UTXOSpendInfo>,
     ) {
         let secp = Secp256k1::new();
         let master_private_key = self
@@ -1063,7 +1062,7 @@ impl Wallet {
             spending_tx.input.iter_mut().zip(inputs_info).enumerate()
         {
             match input_info {
-                SignTransactionInputInfo::SwapCoin {
+                UTXOSpendInfo::SwapCoin {
                     multisig_redeemscript,
                 } => {
                     self.find_incoming_swapcoin(&multisig_redeemscript)
@@ -1071,7 +1070,7 @@ impl Wallet {
                         .sign_transaction_input(ix, &tx_clone, &mut input, &multisig_redeemscript)
                         .unwrap();
                 }
-                SignTransactionInputInfo::SeedCoin { path, input_value } => {
+                UTXOSpendInfo::SeedCoin { path, input_value } => {
                     let privkey = master_private_key
                         .derive_priv(&secp, &DerivationPath::from_str(&path).unwrap())
                         .unwrap()
@@ -1093,6 +1092,11 @@ impl Wallet {
                     input.witness.push(signature.serialize_der().to_vec());
                     input.witness[0].push(SigHashType::All as u8);
                     input.witness.push(pubkey.to_bytes());
+                }
+                UTXOSpendInfo::TimelockContract {
+                    swapcoin_multisig_redeemscript: _,
+                } => {
+                    panic!("not implemented yet");
                 }
             }
         }
@@ -1245,7 +1249,7 @@ impl Wallet {
                 .map(|input_info| (input_info, input_info["bip32_derivs"].as_array().unwrap()))
                 .map(|(input_info, bip32_info)| {
                     if bip32_info.len() == 2 {
-                        SignTransactionInputInfo::SwapCoin {
+                        UTXOSpendInfo::SwapCoin {
                             multisig_redeemscript: Builder::from(
                                 Vec::from_hex(
                                     &input_info["witness_script"]["hex"].as_str().unwrap(),
@@ -1255,7 +1259,7 @@ impl Wallet {
                             .into_script(),
                         }
                     } else {
-                        SignTransactionInputInfo::SeedCoin {
+                        UTXOSpendInfo::SeedCoin {
                             path: bip32_info[0]["path"].as_str().unwrap().to_string(),
                             input_value: convert_json_rpc_bitcoin_to_satoshis(
                                 &input_info["witness_utxo"]["amount"],
@@ -1530,4 +1534,3 @@ fn get_hd_path_from_descriptor<'a>(descriptor: &'a str) -> Option<(&'a str, u32,
     }
     Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
 }
-
