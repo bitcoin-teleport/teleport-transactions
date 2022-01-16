@@ -163,7 +163,9 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
     let mut utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
     utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
-    let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
+    let balance: Amount = utxos
+        .iter()
+        .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
     println!("= spendable wallet balance =");
     println!(
         "{:16} {:24} {:^8} {:<7} value",
