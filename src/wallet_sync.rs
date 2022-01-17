@@ -909,9 +909,6 @@ impl Wallet {
             ),
         >::new();
         let get_hashvalue = |s: &dyn SwapCoin| {
-            if s.is_hash_preimage_known() {
-                return None;
-            }
             let swapcoin_hashvalue = read_hashvalue_from_contract(&s.get_contract_redeemscript())
                 .expect("unable to read hashvalue from contract_redeemscript");
             if completed_coinswap_hashvalues.contains(&swapcoin_hashvalue) {
