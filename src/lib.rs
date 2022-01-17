@@ -14,7 +14,7 @@ use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
 pub mod wallet_sync;
-use wallet_sync::{Wallet, WalletSyncAddressAmount};
+use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount};
 
 pub mod wallet_direct_send;
 use wallet_direct_send::{CoinToSpend, Destination, SendAmount};
@@ -250,28 +250,63 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
         }
     }
 
-    let (_incoming_contract_utxos, mut outgoing_contract_utxos) =
+    let (mut incoming_contract_utxos, mut outgoing_contract_utxos) =
         wallet.find_live_contract_unspents(&rpc).unwrap();
     if !outgoing_contract_utxos.is_empty() {
         outgoing_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
         println!("= live timelocked contracts =");
         println!(
-            "{:16} {:8} {:<7} {:<8} {:6}",
-            "coin", "timelock", "conf", "locked?", "value"
+            "{:16} {:10} {:8} {:<7} {:<8} {:6}",
+            "coin", "hashvalue", "timelock", "conf", "locked?", "value"
         );
         for (outgoing_swapcoin, utxo) in outgoing_contract_utxos {
             let txid = utxo.txid.to_hex();
             let timelock =
                 read_locktime_from_contract(&outgoing_swapcoin.contract_redeemscript).unwrap();
+            let hashvalue = outgoing_swapcoin.get_hashvalue().to_hex();
             #[rustfmt::skip]
-            println!("{}{}{}:{} {:<8} {:<7} {:<8} {}",
+            println!("{}{}{}:{} {}{} {:<8} {:<7} {:<8} {}",
                 if long_form { &txid } else {&txid[0..6] },
                 if long_form { "" } else { ".." },
                 if long_form { &"" } else { &txid[58..64] },
                 utxo.vout,
+                if long_form { &hashvalue } else { &hashvalue[..8] },
+                if long_form { "" } else { ".." },
                 timelock,
                 utxo.confirmations,
                 if utxo.confirmations >= timelock.into() { "unlocked" } else { "locked" },
+                utxo.amount
+            );
+        }
+    }
+
+    //ordinary users shouldnt be spending via the hashlock branch
+    //maybe makers since they're a bit more expertly, and they dont start with the hash preimage
+    //but takers should basically never use the hash preimage
+    let expert_mode = true;
+    if expert_mode && !incoming_contract_utxos.is_empty() {
+        incoming_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
+        println!("= live hashlocked contracts =");
+        println!(
+            "{:16} {:10} {:8} {:<7} {:8} {:6}",
+            "coin", "hashvalue", "timelock", "conf", "preimage", "value"
+        );
+        for (incoming_swapcoin, utxo) in incoming_contract_utxos {
+            let txid = utxo.txid.to_hex();
+            let timelock =
+                read_locktime_from_contract(&incoming_swapcoin.contract_redeemscript).unwrap();
+            let hashvalue = incoming_swapcoin.get_hashvalue().to_hex();
+            #[rustfmt::skip]
+            println!("{}{}{}:{} {}{} {:<8} {:<7} {:8} {}",
+                if long_form { &txid } else {&txid[0..6] },
+                if long_form { "" } else { ".." },
+                if long_form { &"" } else { &txid[58..64] },
+                utxo.vout,
+                if long_form { &hashvalue } else { &hashvalue[..8] },
+                if long_form { "" } else { ".." },
+                timelock,
+                utxo.confirmations,
+                if incoming_swapcoin.is_hash_preimage_known() { "known" } else { "unknown" },
                 utxo.amount
             );
         }
@@ -406,17 +441,27 @@ pub fn recover_from_incomplete_coinswap(
         return;
     }
     let incomplete_coinswap = incomplete_coinswap.unwrap();
-
-    for (ii, outgoing_swapcoin) in incomplete_coinswap.1.iter().enumerate() {
+    for (ii, swapcoin) in incomplete_coinswap
+        .0
+        .iter()
+        .map(|(l, i)| (l, (*i as &dyn WalletSwapCoin)))
+        .chain(
+            incomplete_coinswap
+                .1
+                .iter()
+                .map(|(l, o)| (l, (*o as &dyn WalletSwapCoin))),
+        )
+        .enumerate()
+    {
         wallet
             .import_redeemscript(
                 &rpc,
-                &outgoing_swapcoin.1.contract_redeemscript,
+                &swapcoin.1.get_contract_redeemscript(),
                 wallet_sync::CoreAddressLabelType::Wallet,
             )
             .unwrap();
 
-        let signed_contract_tx = outgoing_swapcoin.1.get_fully_signed_contract_tx();
+        let signed_contract_tx = swapcoin.1.get_fully_signed_contract_tx();
         if dont_broadcast {
             let txhex = bitcoin::consensus::encode::serialize_hex(&signed_contract_tx);
             println!("contract_tx_{} = \n{}", ii, txhex);

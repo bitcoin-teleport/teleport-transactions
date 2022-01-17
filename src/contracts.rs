@@ -32,7 +32,7 @@ use crate::wallet_sync::{
 pub const REFUND_LOCKTIME: u16 = 30; //in blocks
 pub const REFUND_LOCKTIME_STEP: u16 = 5; //in blocks
 
-//like the WalletSwapCoin struct but no privkey or signature information
+//like the Incoming/OutgoingSwapCoin structs but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
 #[derive(Debug, Clone)]
 pub struct WatchOnlySwapCoin {

@@ -240,37 +240,6 @@ impl OutgoingSwapCoin {
         }
     }
 
-    pub fn get_fully_signed_contract_tx(&self) -> Transaction {
-        if self.others_contract_sig.is_none() {
-            panic!("invalid state: others_contract_sig not known");
-        }
-        let my_pubkey = self.get_my_pubkey();
-        let multisig_redeemscript = create_multisig_redeemscript(&my_pubkey, &self.other_pubkey);
-        let index = 0;
-        let secp = Secp256k1::new();
-        let sighash = secp256k1::Message::from_slice(
-            &SigHashCache::new(&self.contract_tx).signature_hash(
-                index,
-                &multisig_redeemscript,
-                self.funding_amount,
-                SigHashType::All,
-            )[..],
-        )
-        .unwrap();
-        let sig_mine = secp.sign(&sighash, &self.my_privkey);
-
-        let mut signed_contract_tx = self.contract_tx.clone();
-        apply_two_signatures_to_2of2_multisig_spend(
-            &my_pubkey,
-            &self.other_pubkey,
-            &sig_mine,
-            &self.others_contract_sig.unwrap(),
-            &mut signed_contract_tx.input[index],
-            &multisig_redeemscript,
-        );
-        signed_contract_tx
-    }
-
     fn sign_timelocked_transaction_input(
         &self,
         index: usize,
@@ -297,37 +266,66 @@ impl OutgoingSwapCoin {
     }
 }
 
-pub trait WalletSwapCoin {
+pub trait WalletSwapCoin: SwapCoin {
     fn get_my_pubkey(&self) -> PublicKey;
     fn get_other_pubkey(&self) -> &PublicKey;
+    fn get_fully_signed_contract_tx(&self) -> Transaction;
+}
+
+macro_rules! add_walletswapcoin_functions {
+    () => {
+        fn get_my_pubkey(&self) -> PublicKey {
+            let secp = Secp256k1::new();
+            PublicKey {
+                compressed: true,
+                key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
+            }
+        }
+
+        fn get_other_pubkey(&self) -> &PublicKey {
+            &self.other_pubkey
+        }
+
+        fn get_fully_signed_contract_tx(&self) -> Transaction {
+            if self.others_contract_sig.is_none() {
+                panic!("invalid state: others_contract_sig not known");
+            }
+            let my_pubkey = self.get_my_pubkey();
+            let multisig_redeemscript =
+                create_multisig_redeemscript(&my_pubkey, &self.other_pubkey);
+            let index = 0;
+            let secp = Secp256k1::new();
+            let sighash = secp256k1::Message::from_slice(
+                &SigHashCache::new(&self.contract_tx).signature_hash(
+                    index,
+                    &multisig_redeemscript,
+                    self.funding_amount,
+                    SigHashType::All,
+                )[..],
+            )
+            .unwrap();
+            let sig_mine = secp.sign(&sighash, &self.my_privkey);
+
+            let mut signed_contract_tx = self.contract_tx.clone();
+            apply_two_signatures_to_2of2_multisig_spend(
+                &my_pubkey,
+                &self.other_pubkey,
+                &sig_mine,
+                &self.others_contract_sig.unwrap(),
+                &mut signed_contract_tx.input[index],
+                &multisig_redeemscript,
+            );
+            signed_contract_tx
+        }
+    };
 }
 
 impl WalletSwapCoin for IncomingSwapCoin {
-    fn get_my_pubkey(&self) -> PublicKey {
-        let secp = Secp256k1::new();
-        PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
-        }
-    }
-
-    fn get_other_pubkey(&self) -> &PublicKey {
-        &self.other_pubkey
-    }
+    add_walletswapcoin_functions!();
 }
 
 impl WalletSwapCoin for OutgoingSwapCoin {
-    fn get_my_pubkey(&self) -> PublicKey {
-        let secp = Secp256k1::new();
-        PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
-        }
-    }
-
-    fn get_other_pubkey(&self) -> &PublicKey {
-        &self.other_pubkey
-    }
+    add_walletswapcoin_functions!();
 }
 
 impl Wallet {
