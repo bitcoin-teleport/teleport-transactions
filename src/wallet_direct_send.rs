@@ -108,7 +108,7 @@ impl Wallet {
         let mut tx_inputs = Vec::<TxIn>::new();
         let mut unspent_inputs = Vec::<(ListUnspentResultEntry, UTXOSpendInfo)>::new();
         //TODO this search within a search could get very slow
-        let list_unspent_result = self.list_unspent_from_wallet(rpc)?;
+        let list_unspent_result = self.list_unspent_from_wallet(rpc, true)?;
         for (list_unspent_entry, spend_info) in list_unspent_result {
             for cts in coins_to_spend {
                 let previous_output = match cts {
@@ -149,6 +149,10 @@ impl Wallet {
                         .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
                         .unwrap()
                         .get_timelock() as u32,
+                    UTXOSpendInfo::HashlockContract {
+                        swapcoin_multisig_redeemscript: _,
+                        input_value: _,
+                    } => 1, //hashlock spends must have 1 because of the `OP_CSV 1`
                     _ => 0,
                 };
                 tx_inputs.push(TxIn {

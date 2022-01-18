@@ -49,7 +49,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::contracts;
-use crate::contracts::{read_hashvalue_from_contract, read_locktime_from_contract, SwapCoin};
+use crate::contracts::SwapCoin;
 use crate::error::Error;
 use crate::messages::Preimage;
 
@@ -107,6 +107,10 @@ pub enum UTXOSpendInfo {
         multisig_redeemscript: Script,
     },
     TimelockContract {
+        swapcoin_multisig_redeemscript: Script,
+        input_value: u64,
+    },
+    HashlockContract {
         swapcoin_multisig_redeemscript: Script,
         input_value: u64,
     },
@@ -207,6 +211,34 @@ impl IncomingSwapCoin {
             redeemscript,
         );
         Ok(())
+    }
+
+    fn sign_hashlocked_transaction_input(
+        &self,
+        index: usize,
+        tx: &Transaction,
+        input: &mut TxIn,
+        input_value: u64,
+    ) {
+        if self.hash_preimage.is_none() {
+            panic!("invalid state, unable to sign: preimage unknown");
+        }
+        let secp = Secp256k1::new();
+        let sighash = secp256k1::Message::from_slice(
+            &SigHashCache::new(tx).signature_hash(
+                index,
+                &self.contract_redeemscript,
+                input_value,
+                SigHashType::All,
+            )[..],
+        )
+        .unwrap();
+
+        let sig_hashlock = secp.sign(&sighash, &self.hashlock_privkey);
+        input.witness.push(sig_hashlock.serialize_der().to_vec());
+        input.witness[0].push(SigHashType::All as u8);
+        input.witness.push(self.hash_preimage.unwrap().to_vec());
+        input.witness.push(self.contract_redeemscript.to_bytes());
     }
 }
 
@@ -743,7 +775,9 @@ impl Wallet {
         Ok(())
     }
 
-    fn create_contract_scriptpubkey_swapcoin_hashmap(&self) -> HashMap<Script, &OutgoingSwapCoin> {
+    fn create_contract_scriptpubkey_outgoing_swapcoin_hashmap(
+        &self,
+    ) -> HashMap<Script, &OutgoingSwapCoin> {
         self.outgoing_swap_coins
             .values()
             .map(|osc| {
@@ -755,30 +789,53 @@ impl Wallet {
             .collect::<HashMap<Script, &OutgoingSwapCoin>>()
     }
 
+    fn create_contract_scriptpubkey_incoming_swapcoin_hashmap(
+        &self,
+    ) -> HashMap<Script, &IncomingSwapCoin> {
+        self.incoming_swap_coins
+            .values()
+            .map(|isc| {
+                (
+                    Address::p2wsh(&isc.contract_redeemscript, NETWORK).script_pubkey(),
+                    isc,
+                )
+            })
+            .collect::<HashMap<Script, &IncomingSwapCoin>>()
+    }
+
     fn is_utxo_ours_and_spendable_get_pointer(
         &self,
         u: &ListUnspentResultEntry,
         contract_scriptpubkeys_outgoing_swapcoins: &HashMap<Script, &OutgoingSwapCoin>,
+        option_contract_scriptpubkeys_incoming_swapcoins: Option<
+            &HashMap<Script, &IncomingSwapCoin>,
+        >,
     ) -> Option<UTXOSpendInfo> {
         if u.descriptor.is_none() {
-            let swapcoin = contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key);
-            if swapcoin.is_none() {
-                return None;
+            if let Some(swapcoin) = contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key)
+            {
+                let timelock = swapcoin.get_timelock();
+                if u.confirmations >= timelock.into() {
+                    return Some(UTXOSpendInfo::TimelockContract {
+                        swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+                        input_value: u.amount.as_sat(),
+                    });
+                }
             }
-            let swapcoin = swapcoin.unwrap();
-            let timelock = read_locktime_from_contract(&swapcoin.contract_redeemscript);
-            if timelock.is_none() {
-                return None;
+            if option_contract_scriptpubkeys_incoming_swapcoins.is_some() {
+                if let Some(swapcoin) = option_contract_scriptpubkeys_incoming_swapcoins
+                    .unwrap()
+                    .get(&u.script_pub_key)
+                {
+                    if swapcoin.is_hash_preimage_known() && u.confirmations > 1 {
+                        return Some(UTXOSpendInfo::HashlockContract {
+                            swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+                            input_value: u.amount.as_sat(),
+                        });
+                    }
+                }
             }
-            let timelock = timelock.unwrap();
-            return if u.confirmations >= timelock.into() {
-                Some(UTXOSpendInfo::TimelockContract {
-                    swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-                    input_value: u.amount.as_sat(),
-                })
-            } else {
-                None
-            };
+            return None;
         }
         let descriptor = u.descriptor.as_ref().unwrap();
         if let Some(ret) = get_hd_path_from_descriptor(&descriptor) {
@@ -830,7 +887,7 @@ impl Wallet {
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
 
         let contract_scriptpubkeys_outgoing_swapcoins =
-            self.create_contract_scriptpubkey_swapcoin_hashmap();
+            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
         let all_unspents = rpc.list_unspent(Some(0), Some(9999999), None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
@@ -838,6 +895,7 @@ impl Wallet {
                 self.is_utxo_ours_and_spendable_get_pointer(
                     u,
                     &contract_scriptpubkeys_outgoing_swapcoins,
+                    None,
                 )
                 .is_none()
             })
@@ -853,9 +911,12 @@ impl Wallet {
     pub fn list_unspent_from_wallet(
         &self,
         rpc: &Client,
+        include_hashlocked: bool,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, Error> {
         let contract_scriptpubkeys_outgoing_swapcoins =
-            self.create_contract_scriptpubkey_swapcoin_hashmap();
+            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
+        let contract_scriptpubkeys_incoming_swapcoins =
+            self.create_contract_scriptpubkey_incoming_swapcoin_hashmap();
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
         Ok(rpc
@@ -867,6 +928,11 @@ impl Wallet {
                     self.is_utxo_ours_and_spendable_get_pointer(
                         u,
                         &contract_scriptpubkeys_outgoing_swapcoins,
+                        if include_hashlocked {
+                            Some(&contract_scriptpubkeys_incoming_swapcoins)
+                        } else {
+                            None
+                        },
                     ),
                 )
             })
@@ -895,9 +961,8 @@ impl Wallet {
             .incoming_swap_coins
             .values()
             .filter(|sc| sc.other_privkey.is_some())
-            .map(|sc| read_hashvalue_from_contract(&sc.contract_redeemscript).unwrap())
+            .map(|sc| sc.get_hashvalue())
             .collect::<HashSet<Hash160>>();
-        //TODO make this read_hashvalue_from_contract() a struct function of WalletCoinSwap
 
         let mut incomplete_swapcoin_groups = HashMap::<
             Hash160,
@@ -907,8 +972,7 @@ impl Wallet {
             ),
         >::new();
         let get_hashvalue = |s: &dyn SwapCoin| {
-            let swapcoin_hashvalue = read_hashvalue_from_contract(&s.get_contract_redeemscript())
-                .expect("unable to read hashvalue from contract_redeemscript");
+            let swapcoin_hashvalue = s.get_hashvalue();
             if completed_coinswap_hashvalues.contains(&swapcoin_hashvalue) {
                 return None;
             }
@@ -965,18 +1029,10 @@ impl Wallet {
         Error,
     > {
         // populate hashmaps where key is contract scriptpubkey and value is the swapcoin
-        let contract_scriptpubkeys_incoming_swapcoins = self
-            .incoming_swap_coins
-            .values()
-            .map(|isc| {
-                (
-                    Address::p2wsh(&isc.contract_redeemscript, NETWORK).script_pubkey(),
-                    isc,
-                )
-            })
-            .collect::<HashMap<Script, &IncomingSwapCoin>>();
+        let contract_scriptpubkeys_incoming_swapcoins =
+            self.create_contract_scriptpubkey_incoming_swapcoin_hashmap();
         let contract_scriptpubkeys_outgoing_swapcoins =
-            self.create_contract_scriptpubkey_swapcoin_hashmap();
+            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
 
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
@@ -1009,7 +1065,7 @@ impl Wallet {
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> Result<u32, Error> {
         let mut max_index: i32 = -1;
         //TODO error handling
-        let utxos = self.list_unspent_from_wallet(rpc)?;
+        let utxos = self.list_unspent_from_wallet(rpc, false)?;
         for (utxo, _) in utxos {
             if utxo.descriptor.is_none() {
                 continue;
@@ -1053,7 +1109,7 @@ impl Wallet {
     }
 
     pub fn get_offer_maxsize(&self, rpc: Arc<Client>) -> Result<u64, Error> {
-        let utxos = self.list_unspent_from_wallet(&rpc)?;
+        let utxos = self.list_unspent_from_wallet(&rpc, false)?;
         let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
         Ok(balance.as_sat())
     }
@@ -1122,6 +1178,13 @@ impl Wallet {
                     .find_outgoing_swapcoin(&swapcoin_multisig_redeemscript)
                     .unwrap()
                     .sign_timelocked_transaction_input(ix, &tx_clone, &mut input, input_value),
+                UTXOSpendInfo::HashlockContract {
+                    swapcoin_multisig_redeemscript,
+                    input_value,
+                } => self
+                    .find_incoming_swapcoin(&swapcoin_multisig_redeemscript)
+                    .unwrap()
+                    .sign_hashlocked_transaction_input(ix, &tx_clone, &mut input, input_value),
             }
         }
     }

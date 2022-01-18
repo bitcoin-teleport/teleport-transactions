@@ -160,7 +160,7 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
 
     let long_form = long_form.unwrap_or(false);
 
-    let mut utxos = wallet.list_unspent_from_wallet(&rpc).unwrap();
+    let mut utxos = wallet.list_unspent_from_wallet(&rpc, false).unwrap();
     utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
     let balance: Amount = utxos
