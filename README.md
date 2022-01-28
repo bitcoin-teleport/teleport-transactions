@@ -290,22 +290,24 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9744; set up a solution to mirror this repository somewhere else in case github rm's it like they did youtube-dl
 * &#9745; implement and deploy fidelity bonds in joinmarket, to experiment and gain experience with the concept
 * &#9745; add proper error handling to this project, as right now most of the time it will exit on anything unexpected
-* &#9744; code security, recover from aborts and deveations
-* &#9744; code fidelity bonds
+* &#9745; code security, recover from aborts and deveations
 * &#9744; implement coinswap fees and taker paying for miner fees
 * &#9744; code federated message board seeder servers
-* &#9744; RELEASE FOR TESTNET
+* &#9744; ALPHA RELEASE FOR TESTNET, REGTEST, SIGNET AND MAINNET (FOR THE BRAVE ONES)
+* &#9744; code fidelity bonds
 * &#9744; add support for miner fees and precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
 * &#9744; automated tests (might be earlier in case its useful in test driven development)
 * &#9744; move wallet files and config to its own data directory ~/.teleport/
+* &#9744; have watchtower store data in a file, not in RAM
 * &#9744; add collateral inputs to receiver contract txes
 * &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to back up these wallets
-* &#9744; RELEASE FOR MAINNET
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
 * &#9744; implement branching and merging coinswaps for takers, so that they can create coinswaps even if they just have one UTXO
 * &#9744; add encrypted wallet files
 * &#9744; reproducible builds + pin dependencies to a hash
 * &#9744; break as many blockchain analysis heuristics as possible, e.g. change address detection
+* &#9744; create a GUI for taker
+* &#9744; find coins landing on already-used addresses and freeze them, to resist the [forced address reuse attack](https://en.bitcoin.it/wiki/Privacy#Forced_address_reuse)
 * &#9744; payjoin-with-coinswap with decoy UTXOs
 * &#9744; convert contracts which currently use script to instead use adaptor signatures, aiming to not reveal contracts in the backout case
 * &#9744; abstract away the Core RPC so that its functions can be done in another way, for example for the taker being supported as a plugin for electrum
