@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use std::array::TryFromSliceError;
 use std::convert::TryInto;
 
 use bitcoin::{
@@ -29,8 +28,8 @@ use crate::wallet_sync::{
 
 //TODO should be configurable somehow
 //relatively low value for now so that its easier to test on regtest
-pub const REFUND_LOCKTIME: u16 = 30; //in blocks
-pub const REFUND_LOCKTIME_STEP: u16 = 5; //in blocks
+pub const REFUND_LOCKTIME: u16 = 6; //in blocks
+pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
 
 //like the Incoming/OutgoingSwapCoin structs but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
@@ -113,9 +112,15 @@ pub fn create_contract_redeemscript(
 }
 
 //TODO put all these magic numbers in a const or something
-pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, TryFromSliceError> {
+//a better way is to use redeemscript.instructions() like read_locktime_from_contract()
+pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, &'static str> {
+    if redeemscript.to_bytes().len() < 25 {
+        return Err("script too short");
+    }
     Ok(Hash160::from_inner(
-        redeemscript.to_bytes()[4..24].try_into()?,
+        redeemscript.to_bytes()[4..24]
+            .try_into()
+            .map_err(|_| "tryinto error")?,
     ))
 }
 
@@ -141,14 +146,20 @@ pub fn read_locktime_from_contract(redeemscript: &Script) -> Option<u16> {
 
 pub fn read_hashlock_pubkey_from_contract(
     redeemscript: &Script,
-) -> Result<PublicKey, bitcoin::util::key::Error> {
-    PublicKey::from_slice(&redeemscript.to_bytes()[27..60])
+) -> Result<PublicKey, &'static str> {
+    if redeemscript.to_bytes().len() < 61 {
+        return Err("script too short");
+    }
+    PublicKey::from_slice(&redeemscript.to_bytes()[27..60]).map_err(|_| "pubkey error")
 }
 
 pub fn read_timelock_pubkey_from_contract(
     redeemscript: &Script,
-) -> Result<PublicKey, bitcoin::util::key::Error> {
-    PublicKey::from_slice(&redeemscript.to_bytes()[65..98])
+) -> Result<PublicKey, &'static str> {
+    if redeemscript.to_bytes().len() < 99 {
+        return Err("script too short");
+    }
+    PublicKey::from_slice(&redeemscript.to_bytes()[65..98]).map_err(|_| "pubkey error")
 }
 
 pub fn read_pubkeys_from_multisig_redeemscript(

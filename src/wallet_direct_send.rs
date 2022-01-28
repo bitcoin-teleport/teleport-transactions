@@ -178,7 +178,7 @@ impl Wallet {
         if dest_addr.network != NETWORK {
             panic!("wrong address network type (e.g. testnet, regtest)");
         }
-        let miner_fee = 500; //TODO do this calculation properly
+        let miner_fee = 2000; //TODO do this calculation properly
 
         let mut output = Vec::<TxOut>::new();
         let total_input_value = unspent_inputs

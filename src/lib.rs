@@ -454,17 +454,18 @@ pub fn recover_from_incomplete_coinswap(
         .enumerate()
     {
         wallet
-            .import_redeemscript(
-                &rpc,
-                &swapcoin.1.get_contract_redeemscript(),
-                wallet_sync::CoreAddressLabelType::Wallet,
-            )
+            .import_wallet_redeemscript(&rpc, &swapcoin.1.get_contract_redeemscript())
             .unwrap();
 
         let signed_contract_tx = swapcoin.1.get_fully_signed_contract_tx();
         if dont_broadcast {
             let txhex = bitcoin::consensus::encode::serialize_hex(&signed_contract_tx);
-            println!("contract_tx_{} = \n{}", ii, txhex);
+            println!(
+                "contract_tx_{} (txid = {}) = \n{}",
+                ii,
+                signed_contract_tx.txid(),
+                txhex
+            );
             let accepted = rpc
                 .test_mempool_accept(&[txhex.clone()])
                 .unwrap()

@@ -29,10 +29,9 @@ use crate::messages::{
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
-use crate::wallet_sync::{CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
-use crate::watchtower_client::{
-    ping_watchtowers, register_coinswap_with_watchtowers, ContractInfo,
-};
+use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin};
+use crate::watchtower_client::{ping_watchtowers, register_coinswap_with_watchtowers};
+use crate::watchtower_protocol::{ContractTransaction, ContractsInfo};
 
 //used to configure the maker do weird things for testing
 #[derive(Debug, Clone, Copy)]
@@ -517,11 +516,10 @@ fn handle_proof_of_funding(
         funding_outputs.iter(),
         incoming_swapcoin_keys.iter()
     ) {
-        wallet.read().unwrap().import_redeemscript(
-            &rpc,
-            &funding_info.multisig_redeemscript,
-            CoreAddressLabelType::Wallet,
-        )?;
+        wallet
+            .read()
+            .unwrap()
+            .import_wallet_redeemscript(&rpc, &funding_info.multisig_redeemscript)?;
         wallet.read().unwrap().import_tx_with_merkleproof(
             &rpc,
             &funding_info.funding_tx,
@@ -677,17 +675,39 @@ async fn handle_senders_and_receivers_contract_sigs(
             outgoing_swapcoin.others_contract_sig = Some(senders_sig)
         });
 
-    register_coinswap_with_watchtowers(
-        incoming_swapcoins
+    let wallet_label = wallet.read().unwrap().get_core_wallet_label();
+    let internal_addresses = wallet
+        .read()
+        .unwrap()
+        .get_next_internal_addresses(&rpc, incoming_swapcoins.len() as u32)?;
+    register_coinswap_with_watchtowers(ContractsInfo {
+        contract_txes: incoming_swapcoins
             .iter()
-            .map(|isc| ContractInfo {
-                contract_tx: isc.contract_tx.clone(),
+            .zip(internal_addresses.iter())
+            .map(|(isc, addr)| ContractTransaction {
+                tx: isc.get_fully_signed_contract_tx(),
+                redeemscript: isc.contract_redeemscript.clone(),
+                hashlock_spend_without_preimage: Some(
+                    isc.create_hashlock_spend_without_preimage(addr),
+                ),
+                timelock_spend: None,
+                timelock_spend_broadcasted: false,
             })
-            .chain(outgoing_swapcoins.iter().map(|osc| ContractInfo {
-                contract_tx: osc.contract_tx.clone(),
-            }))
-            .collect::<Vec<ContractInfo>>(),
-    )
+            .chain(
+                outgoing_swapcoins
+                    .iter()
+                    .zip(internal_addresses.iter())
+                    .map(|(osc, addr)| ContractTransaction {
+                        tx: osc.get_fully_signed_contract_tx(),
+                        redeemscript: osc.contract_redeemscript.clone(),
+                        hashlock_spend_without_preimage: None,
+                        timelock_spend: Some(osc.create_timelock_spend(addr)),
+                        timelock_spend_broadcasted: false,
+                    }),
+            )
+            .collect::<Vec<ContractTransaction>>(),
+        wallet_label,
+    })
     .await?;
 
     let mut w = wallet.write().unwrap();

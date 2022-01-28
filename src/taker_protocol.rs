@@ -39,11 +39,12 @@ use crate::messages::{
 
 use crate::offerbook_sync::{sync_offerbook, OfferAddress};
 use crate::wallet_sync::{
-    generate_keypair, CoreAddressLabelType, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
+    generate_keypair, import_watchonly_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
 };
 
-use crate::watchtower_client::ContractInfo;
-use crate::watchtower_protocol::check_for_broadcasted_contract_txes;
+use crate::watchtower_protocol::{
+    check_for_broadcasted_contract_txes, ContractTransaction, ContractsInfo,
+};
 
 #[tokio::main]
 pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
@@ -267,7 +268,6 @@ async fn send_coinswap(
                 } else {
                     let next_swapcoins = create_watch_only_swap_coins(
                         rpc,
-                        wallet,
                         &maker_sign_sender_and_receiver_contracts,
                         &next_peer_multisig_pubkeys,
                         &next_swap_contract_redeemscripts,
@@ -753,20 +753,9 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
 async fn wait_for_funding_tx_confirmation(
     rpc: &Client,
     funding_txids: &[Txid],
-    contract_txes_to_watch: &[Vec<Transaction>],
+    contract_to_watch: &[Vec<Transaction>],
     last_checked_block_height: &mut Option<u64>,
 ) -> Result<Option<(Vec<Transaction>, Vec<String>)>, Error> {
-    let contract_infos_to_watch = contract_txes_to_watch
-        .iter()
-        .map(|contract_txes| {
-            contract_txes
-                .iter()
-                .map(|contract_tx| ContractInfo {
-                    contract_tx: contract_tx.clone(),
-                })
-                .collect::<Vec<ContractInfo>>()
-        })
-        .collect::<Vec<Vec<ContractInfo>>>();
     let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
     let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
     loop {
@@ -801,13 +790,28 @@ async fn wait_for_funding_tx_confirmation(
                 .collect::<Result<Vec<String>, bitcoincore_rpc::Error>>()?;
             return Ok(Some((txes, merkleproofs)));
         }
-        if !contract_infos_to_watch.is_empty() {
+        if !contract_to_watch.is_empty() {
             let contracts_broadcasted = check_for_broadcasted_contract_txes(
                 rpc,
-                &contract_infos_to_watch,
+                &contract_to_watch
+                    .iter()
+                    .map(|txes| ContractsInfo {
+                        contract_txes: txes
+                            .iter()
+                            .map(|tx| ContractTransaction {
+                                tx: tx.clone(),
+                                redeemscript: Script::new(),
+                                hashlock_spend_without_preimage: None,
+                                timelock_spend: None,
+                                timelock_spend_broadcasted: false,
+                            })
+                            .collect::<Vec<ContractTransaction>>(),
+                        wallet_label: String::new(),
+                    })
+                    .collect::<Vec<ContractsInfo>>(),
                 last_checked_block_height,
             )?;
-            if contracts_broadcasted {
+            if !contracts_broadcasted.is_empty() {
                 log::info!("Contract transactions were broadcasted! Aborting");
                 return Ok(None);
             }
@@ -1009,7 +1013,6 @@ fn sign_senders_contract_txes(
 
 fn create_watch_only_swap_coins(
     rpc: &Client,
-    wallet: &mut Wallet,
     maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
     next_peer_multisig_pubkeys: &[PublicKey],
     next_swap_contract_redeemscripts: &[Script],
@@ -1036,11 +1039,7 @@ fn create_watch_only_swap_coins(
     //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
     // is not equal to p2wsh(next_swap_contract_redeemscripts)
     for swapcoin in &next_swapcoins {
-        wallet.import_redeemscript(
-            rpc,
-            &swapcoin.get_multisig_redeemscript(),
-            CoreAddressLabelType::WatchOnlySwapCoin,
-        )?
+        import_watchonly_redeemscript(rpc, &swapcoin.get_multisig_redeemscript())?
     }
     Ok(next_swapcoins)
 }

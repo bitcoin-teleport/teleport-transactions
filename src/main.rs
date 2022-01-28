@@ -1,6 +1,6 @@
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::{hash160::Hash as Hash160, hex::FromHex};
-use bitcoin::Transaction;
+use bitcoin::{Script, Transaction};
 
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -9,7 +9,7 @@ use teleport;
 use teleport::maker_protocol::MakerBehavior;
 use teleport::wallet_direct_send::{CoinToSpend, Destination, SendAmount};
 use teleport::wallet_sync::WalletSyncAddressAmount;
-use teleport::watchtower_client::ContractInfo;
+use teleport::watchtower_protocol::{ContractTransaction, ContractsInfo};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "teleport", about = "A tool for CoinSwap")]
@@ -164,20 +164,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let contract_txes = contract_transactions_hex
                 .iter()
-                .map(|cth| {
-                    deserialize::<Transaction>(
+                .map(|cth| ContractTransaction {
+                    tx: deserialize::<Transaction>(
                         &Vec::from_hex(&cth).expect("Invalid transaction hex string"),
                     )
-                    .expect("Unable to deserialize transaction hex")
+                    .expect("Unable to deserialize transaction hex"),
+                    redeemscript: Script::new(),
+                    hashlock_spend_without_preimage: None,
+                    timelock_spend: None,
+                    timelock_spend_broadcasted: false,
                 })
-                .collect::<Vec<Transaction>>();
-            let contracts_to_watch = contract_txes
-                .iter()
-                .map(|contract_tx| ContractInfo {
-                    contract_tx: contract_tx.clone(),
-                })
-                .collect::<Vec<ContractInfo>>();
-            teleport::watchtower_client::test_watchtower_client(contracts_to_watch);
+                .collect::<Vec<ContractTransaction>>();
+            teleport::watchtower_client::test_watchtower_client(ContractsInfo {
+                contract_txes,
+                wallet_label: String::new(),
+            });
         }
     }
 

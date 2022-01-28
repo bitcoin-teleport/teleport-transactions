@@ -2,22 +2,13 @@ use tokio::io::BufReader;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-use serde::{Deserialize, Serialize};
-
-use bitcoin::Transaction;
-
 use crate::error::Error;
 use crate::watchtower_protocol::{
-    MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
+    ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
 };
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ContractInfo {
-    pub contract_tx: Transaction,
-}
-
 #[tokio::main]
-pub async fn test_watchtower_client(contracts_to_watch: Vec<ContractInfo>) {
+pub async fn test_watchtower_client(contracts_to_watch: ContractsInfo) {
     ping_watchtowers().await.unwrap();
     register_coinswap_with_watchtowers(contracts_to_watch)
         .await
@@ -30,7 +21,7 @@ fn parse_message(line: &str) -> Result<WatchtowerToMakerMessage, Error> {
 }
 
 pub async fn register_coinswap_with_watchtowers(
-    contracts_to_watch: Vec<ContractInfo>,
+    contracts_to_watch: ContractsInfo,
 ) -> Result<(), Error> {
     send_message_to_watchtowers(&MakerToWatchtowerMessage::WatchContractTxes(
         WatchContractTxes {

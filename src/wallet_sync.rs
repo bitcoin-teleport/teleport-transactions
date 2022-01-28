@@ -89,10 +89,6 @@ pub enum WalletSyncAddressAmount {
     Testing,
 }
 
-pub enum CoreAddressLabelType {
-    Wallet,
-    WatchOnlySwapCoin,
-}
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
 //data needed to find information  in addition to ListUnspentResultEntry
@@ -213,16 +209,14 @@ impl IncomingSwapCoin {
         Ok(())
     }
 
-    fn sign_hashlocked_transaction_input(
+    fn sign_hashlocked_transaction_input_given_preimage(
         &self,
         index: usize,
         tx: &Transaction,
         input: &mut TxIn,
         input_value: u64,
+        hash_preimage: &[u8],
     ) {
-        if self.hash_preimage.is_none() {
-            panic!("invalid state, unable to sign: preimage unknown");
-        }
         let secp = Secp256k1::new();
         let sighash = secp256k1::Message::from_slice(
             &SigHashCache::new(tx).signature_hash(
@@ -237,8 +231,61 @@ impl IncomingSwapCoin {
         let sig_hashlock = secp.sign(&sighash, &self.hashlock_privkey);
         input.witness.push(sig_hashlock.serialize_der().to_vec());
         input.witness[0].push(SigHashType::All as u8);
-        input.witness.push(self.hash_preimage.unwrap().to_vec());
+        input.witness.push(hash_preimage.to_vec());
         input.witness.push(self.contract_redeemscript.to_bytes());
+    }
+
+    fn sign_hashlocked_transaction_input(
+        &self,
+        index: usize,
+        tx: &Transaction,
+        input: &mut TxIn,
+        input_value: u64,
+    ) {
+        if self.hash_preimage.is_none() {
+            panic!("invalid state, unable to sign: preimage unknown");
+        }
+        self.sign_hashlocked_transaction_input_given_preimage(
+            index,
+            tx,
+            input,
+            input_value,
+            &self.hash_preimage.unwrap(),
+        )
+    }
+
+    pub fn create_hashlock_spend_without_preimage(
+        &self,
+        destination_address: &Address,
+    ) -> Transaction {
+        let miner_fee = 200; //TODO do this calculation properly
+        let mut tx = Transaction {
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: self.contract_tx.txid(),
+                    vout: 0, //contract_tx is one-input-one-output
+                },
+                sequence: 1, //hashlock spends must have 1 because of the `OP_CSV 1`
+                witness: Vec::new(),
+                script_sig: Script::new(),
+            }],
+            output: vec![TxOut {
+                script_pubkey: destination_address.script_pubkey(),
+                value: self.contract_tx.output[0].value - miner_fee,
+            }],
+            lock_time: 0,
+            version: 2,
+        };
+        let index = 0;
+        let preimage = Vec::new();
+        self.sign_hashlocked_transaction_input_given_preimage(
+            index,
+            &tx.clone(),
+            &mut tx.input[0],
+            self.contract_tx.output[0].value,
+            &preimage,
+        );
+        tx
     }
 }
 
@@ -295,6 +342,35 @@ impl OutgoingSwapCoin {
         input.witness[0].push(SigHashType::All as u8);
         input.witness.push(Vec::new());
         input.witness.push(self.contract_redeemscript.to_bytes());
+    }
+
+    pub fn create_timelock_spend(&self, destination_address: &Address) -> Transaction {
+        let miner_fee = 200; //TODO do this calculation properly
+        let mut tx = Transaction {
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: self.contract_tx.txid(),
+                    vout: 0, //contract_tx is one-input-one-output
+                },
+                sequence: self.get_timelock() as u32,
+                witness: Vec::new(),
+                script_sig: Script::new(),
+            }],
+            output: vec![TxOut {
+                script_pubkey: destination_address.script_pubkey(),
+                value: self.contract_tx.output[0].value - miner_fee,
+            }],
+            lock_time: 0,
+            version: 2,
+        };
+        let index = 0;
+        self.sign_timelocked_transaction_input(
+            index,
+            &tx.clone(),
+            &mut tx.input[0],
+            self.contract_tx.output[0].value,
+        );
+        tx
     }
 }
 
@@ -637,7 +713,7 @@ impl Wallet {
         descriptors.map_err(|e| Error::Rpc(e))
     }
 
-    fn get_core_wallet_label(&self) -> String {
+    pub fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
         let m_xpub = ExtendedPubKey::from_private(&secp, &self.master_key);
         m_xpub.fingerprint().to_string()
@@ -827,7 +903,7 @@ impl Wallet {
                     .unwrap()
                     .get(&u.script_pub_key)
                 {
-                    if swapcoin.is_hash_preimage_known() && u.confirmations > 1 {
+                    if swapcoin.is_hash_preimage_known() && u.confirmations >= 1 {
                         return Some(UTXOSpendInfo::HashlockContract {
                             swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
                             input_value: u.amount.as_sat(),
@@ -1420,36 +1496,12 @@ impl Wallet {
         )
     }
 
-    pub fn import_redeemscript(
+    pub fn import_wallet_redeemscript(
         &self,
         rpc: &Client,
         redeemscript: &Script,
-        address_label_type: CoreAddressLabelType,
-    ) -> Result<(), Error> {
-        let address_label = match address_label_type {
-            CoreAddressLabelType::Wallet => self.get_core_wallet_label(),
-            CoreAddressLabelType::WatchOnlySwapCoin => WATCH_ONLY_SWAPCOIN_LABEL.to_string(),
-        };
-        let spk = Address::p2wsh(&redeemscript, NETWORK).script_pubkey();
-        let result = rpc.import_multi(
-            &[ImportMultiRequest {
-                timestamp: ImportMultiRescanSince::Now,
-                script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
-                redeem_script: Some(redeemscript),
-                watchonly: Some(true),
-                label: Some(&address_label),
-                ..Default::default()
-            }],
-            Some(&ImportMultiOptions {
-                rescan: Some(false),
-            }),
-        )?;
-        for r in result {
-            if !r.success {
-                return Err(Error::Rpc(bitcoincore_rpc::Error::UnexpectedStructure));
-            }
-        }
-        Ok(())
+    ) -> Result<(), bitcoincore_rpc::Error> {
+        import_redeemscript(rpc, redeemscript, &self.get_core_wallet_label())
     }
 
     pub fn import_tx_with_merkleproof(
@@ -1557,6 +1609,40 @@ pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Scrip
     .push_opcode(all::OP_PUSHNUM_2)
     .push_opcode(all::OP_CHECKMULTISIG)
     .into_script()
+}
+
+pub fn import_watchonly_redeemscript(
+    rpc: &Client,
+    redeemscript: &Script,
+) -> Result<(), bitcoincore_rpc::Error> {
+    import_redeemscript(rpc, redeemscript, &WATCH_ONLY_SWAPCOIN_LABEL.to_string())
+}
+
+pub fn import_redeemscript(
+    rpc: &Client,
+    redeemscript: &Script,
+    address_label: &String,
+) -> Result<(), bitcoincore_rpc::Error> {
+    let spk = Address::p2wsh(&redeemscript, NETWORK).script_pubkey();
+    let result = rpc.import_multi(
+        &[ImportMultiRequest {
+            timestamp: ImportMultiRescanSince::Now,
+            script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
+            redeem_script: Some(redeemscript),
+            watchonly: Some(true),
+            label: Some(&address_label),
+            ..Default::default()
+        }],
+        Some(&ImportMultiOptions {
+            rescan: Some(false),
+        }),
+    )?;
+    for r in result {
+        if !r.success {
+            return Err(bitcoincore_rpc::Error::UnexpectedStructure);
+        }
+    }
+    Ok(())
 }
 
 fn apply_two_signatures_to_2of2_multisig_spend(
