@@ -120,17 +120,22 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, Tr
 }
 
 pub fn read_locktime_from_contract(redeemscript: &Script) -> Option<u16> {
-    if let Instruction::PushBytes(locktime_bytes) = redeemscript.instructions().nth(12)?.ok()? {
-        match locktime_bytes.len() {
+    match redeemscript.instructions().nth(12)?.ok()? {
+        Instruction::PushBytes(locktime_bytes) => match locktime_bytes.len() {
             1 => Some(locktime_bytes[0] as u16),
             2 | 3 => {
                 let (int_bytes, _rest) = locktime_bytes.split_at(std::mem::size_of::<u16>());
                 Some(u16::from_le_bytes(int_bytes.try_into().unwrap()))
             }
             _ => None,
+        },
+        Instruction::Op(opcode) => {
+            if let opcodes::Class::PushNum(n) = opcode.classify() {
+                Some(n.try_into().ok()?)
+            } else {
+                None
+            }
         }
-    } else {
-        None
     }
 }
 
