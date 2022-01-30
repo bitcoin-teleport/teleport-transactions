@@ -1358,13 +1358,14 @@ impl Wallet {
                 Some(WalletCreateFundedPsbtOptions {
                     include_watching: Some(true),
                     change_address: Some(change_address.clone()),
-                    fee_rate: Some(Amount::from_btc(0.0001).unwrap()),
+                    fee_rate: Some(Amount::from_btc(0.00001).unwrap()),
                     ..Default::default()
                 }),
                 None,
             )?;
             let decoded_psbt =
                 rpc.call::<Value>("decodepsbt", &[Value::String(psbt_result.psbt)])?;
+            log::debug!(target: "wallet", "created spending tx, miner fee={}", psbt_result.fee);
 
             //TODO proper error handling, theres many unwrap()s here
             //make this function return Result<>
