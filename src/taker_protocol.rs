@@ -147,7 +147,7 @@ async fn send_coinswap(
     for outgoing_swapcoin in &outgoing_swapcoins {
         wallet.add_outgoing_swapcoin(outgoing_swapcoin.clone());
     }
-    wallet.update_swap_coins_list().unwrap();
+    wallet.update_swapcoins_list().unwrap();
 
     log::debug!("My Funding Tx:  {:#?}", my_funding_txes);
     log::debug!("Outgoing SwapCoins: {:#?}", outgoing_swapcoins);
@@ -266,7 +266,7 @@ async fn send_coinswap(
                         &maker_sign_sender_and_receiver_contracts,
                     )?
                 } else {
-                    let next_swapcoins = create_watch_only_swap_coins(
+                    let next_swapcoins = create_watch_only_swapcoins(
                         rpc,
                         &maker_sign_sender_and_receiver_contracts,
                         &next_peer_multisig_pubkeys,
@@ -438,7 +438,7 @@ async fn send_coinswap(
     for incoming_swapcoin in &incoming_swapcoins {
         wallet.add_incoming_swapcoin(incoming_swapcoin.clone());
     }
-    wallet.update_swap_coins_list().unwrap();
+    wallet.update_swapcoins_list().unwrap();
 
     let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
     for (index, maker_address) in active_maker_addresses.iter().enumerate() {
@@ -534,7 +534,7 @@ async fn send_coinswap(
             .unwrap()
             .other_privkey = incoming_swapcoin.other_privkey;
     }
-    wallet.update_swap_coins_list().unwrap();
+    wallet.update_swapcoins_list().unwrap();
 
     log::info!("Successfully Completed Coinswap");
     Ok(())
@@ -1011,7 +1011,7 @@ fn sign_senders_contract_txes(
         .map_err(|_| Error::Protocol("error with signing contract tx"))
 }
 
-fn create_watch_only_swap_coins(
+fn create_watch_only_swapcoins(
     rpc: &Client,
     maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
     next_peer_multisig_pubkeys: &[PublicKey],

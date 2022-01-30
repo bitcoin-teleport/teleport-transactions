@@ -717,7 +717,7 @@ async fn handle_senders_and_receivers_contract_sigs(
     outgoing_swapcoins
         .iter()
         .for_each(|outgoing_swapcoin| w.add_outgoing_swapcoin(outgoing_swapcoin.clone()));
-    w.update_swap_coins_list()?;
+    w.update_swapcoins_list()?;
 
     let mut my_funding_txids = Vec::<Txid>::new();
     for my_funding_tx in connection_state.pending_funding_txes.as_ref().unwrap() {
@@ -799,7 +799,7 @@ fn handle_hash_preimage(
         });
     }
 
-    wallet_ref.update_swap_coins_list()?;
+    wallet_ref.update_swapcoins_list()?;
     Ok(Some(MakerToTakerMessage::PrivateKeyHandover(
         PrivateKeyHandover {
             swapcoin_private_keys,
@@ -818,7 +818,7 @@ fn handle_private_key_handover(
             .ok_or(Error::Protocol("multisig_redeemscript not found"))?
             .apply_privkey(swapcoin_private_key.key)?
     }
-    wallet_ref.update_swap_coins_list()?;
+    wallet_ref.update_swapcoins_list()?;
     log::info!("Successfully Completed Coinswap");
     Ok(None)
 }

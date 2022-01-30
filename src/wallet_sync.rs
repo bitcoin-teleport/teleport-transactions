@@ -70,8 +70,8 @@ struct WalletFileData {
     seedphrase: String,
     extension: String,
     external_index: u32,
-    incoming_swap_coins: Vec<IncomingSwapCoin>,
-    outgoing_swap_coins: Vec<OutgoingSwapCoin>,
+    incoming_swapcoins: Vec<IncomingSwapCoin>,
+    outgoing_swapcoins: Vec<OutgoingSwapCoin>,
     prevout_to_contract_map: HashMap<OutPoint, Script>,
 }
 
@@ -80,8 +80,8 @@ pub struct Wallet {
     wallet_file_name: String,
     external_index: u32,
     initial_address_import_count: usize,
-    incoming_swap_coins: HashMap<Script, IncomingSwapCoin>,
-    outgoing_swap_coins: HashMap<Script, OutgoingSwapCoin>,
+    incoming_swapcoins: HashMap<Script, IncomingSwapCoin>,
+    outgoing_swapcoins: HashMap<Script, OutgoingSwapCoin>,
 }
 
 pub enum WalletSyncAddressAmount {
@@ -443,15 +443,15 @@ impl Wallet {
             self.master_key, self.external_index
         );
 
-        for (multisig_redeemscript, swapcoin) in &self.incoming_swap_coins {
+        for (multisig_redeemscript, swapcoin) in &self.incoming_swapcoins {
             Self::print_script_and_coin(multisig_redeemscript, swapcoin);
         }
-        for (multisig_redeemscript, swapcoin) in &self.outgoing_swap_coins {
+        for (multisig_redeemscript, swapcoin) in &self.outgoing_swapcoins {
             Self::print_script_and_coin(multisig_redeemscript, swapcoin);
         }
         println!(
             "swapcoin count = {}",
-            self.incoming_swap_coins.len() + self.outgoing_swap_coins.len()
+            self.incoming_swapcoins.len() + self.outgoing_swapcoins.len()
         );
     }
 
@@ -480,8 +480,8 @@ impl Wallet {
             seedphrase,
             extension,
             external_index: 0,
-            incoming_swap_coins: Vec::new(),
-            outgoing_swap_coins: Vec::new(),
+            incoming_swapcoins: Vec::new(),
+            outgoing_swapcoins: Vec::new(),
             prevout_to_contract_map: HashMap::<OutPoint, Script>::new(),
         };
         let wallet_file = File::create(wallet_file_name)?;
@@ -521,9 +521,9 @@ impl Wallet {
         let xprv = ExtendedPrivKey::new_master(NETWORK, &seed.0).unwrap();
 
         log::debug!(target: "wallet",
-            "loaded wallet file, external_index={} incoming_swap_coins={} outgoing_swap_coins={}",
+            "loaded wallet file, external_index={} incoming_swapcoins={} outgoing_swapcoins={}",
             wallet_file_data.external_index,
-            wallet_file_data.incoming_swap_coins.len(), wallet_file_data.outgoing_swap_coins.len());
+            wallet_file_data.incoming_swapcoins.len(), wallet_file_data.outgoing_swapcoins.len());
 
         let wallet = Wallet {
             master_key: xprv,
@@ -533,13 +533,13 @@ impl Wallet {
                 WalletSyncAddressAmount::Normal => 5000,
                 WalletSyncAddressAmount::Testing => 6,
             },
-            incoming_swap_coins: wallet_file_data
-                .incoming_swap_coins
+            incoming_swapcoins: wallet_file_data
+                .incoming_swapcoins
                 .iter()
                 .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
                 .collect::<HashMap<Script, IncomingSwapCoin>>(),
-            outgoing_swap_coins: wallet_file_data
-                .outgoing_swap_coins
+            outgoing_swapcoins: wallet_file_data
+                .outgoing_swapcoins
                 .iter()
                 .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
                 .collect::<HashMap<Script, OutgoingSwapCoin>>(),
@@ -560,15 +560,15 @@ impl Wallet {
         self.external_index
     }
 
-    pub fn update_swap_coins_list(&self) -> Result<(), Error> {
+    pub fn update_swapcoins_list(&self) -> Result<(), Error> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
-        wallet_file_data.incoming_swap_coins = self
-            .incoming_swap_coins
+        wallet_file_data.incoming_swapcoins = self
+            .incoming_swapcoins
             .values()
             .cloned()
             .collect::<Vec<IncomingSwapCoin>>();
-        wallet_file_data.outgoing_swap_coins = self
-            .outgoing_swap_coins
+        wallet_file_data.outgoing_swapcoins = self
+            .outgoing_swapcoins
             .values()
             .cloned()
             .collect::<Vec<OutgoingSwapCoin>>();
@@ -581,35 +581,35 @@ impl Wallet {
         &self,
         multisig_redeemscript: &Script,
     ) -> Option<&IncomingSwapCoin> {
-        self.incoming_swap_coins.get(multisig_redeemscript)
+        self.incoming_swapcoins.get(multisig_redeemscript)
     }
 
     pub fn find_outgoing_swapcoin(
         &self,
         multisig_redeemscript: &Script,
     ) -> Option<&OutgoingSwapCoin> {
-        self.outgoing_swap_coins.get(multisig_redeemscript)
+        self.outgoing_swapcoins.get(multisig_redeemscript)
     }
 
     pub fn find_incoming_swapcoin_mut(
         &mut self,
         multisig_redeemscript: &Script,
     ) -> Option<&mut IncomingSwapCoin> {
-        self.incoming_swap_coins.get_mut(multisig_redeemscript)
+        self.incoming_swapcoins.get_mut(multisig_redeemscript)
     }
 
     pub fn add_incoming_swapcoin(&mut self, coin: IncomingSwapCoin) {
-        self.incoming_swap_coins
+        self.incoming_swapcoins
             .insert(coin.get_multisig_redeemscript(), coin);
     }
 
     pub fn add_outgoing_swapcoin(&mut self, coin: OutgoingSwapCoin) {
-        self.outgoing_swap_coins
+        self.outgoing_swapcoins
             .insert(coin.get_multisig_redeemscript(), coin);
     }
 
-    pub fn get_swap_coins_count(&self) -> usize {
-        self.incoming_swap_coins.len() + self.outgoing_swap_coins.len()
+    pub fn get_swapcoins_count(&self) -> usize {
+        self.incoming_swapcoins.len() + self.outgoing_swapcoins.len()
     }
 
     //this function is used in two places
@@ -776,7 +776,7 @@ impl Wallet {
             .collect::<Vec<&String>>();
 
         let mut swapcoin_descriptors_to_import = self
-            .incoming_swap_coins
+            .incoming_swapcoins
             .values()
             .map(|sc| {
                 format!(
@@ -790,7 +790,7 @@ impl Wallet {
             .collect::<Vec<String>>();
 
         swapcoin_descriptors_to_import.extend(
-            self.outgoing_swap_coins
+            self.outgoing_swapcoins
                 .values()
                 .map(|sc| {
                     format!(
@@ -854,7 +854,7 @@ impl Wallet {
     fn create_contract_scriptpubkey_outgoing_swapcoin_hashmap(
         &self,
     ) -> HashMap<Script, &OutgoingSwapCoin> {
-        self.outgoing_swap_coins
+        self.outgoing_swapcoins
             .values()
             .map(|osc| {
                 (
@@ -868,7 +868,7 @@ impl Wallet {
     fn create_contract_scriptpubkey_incoming_swapcoin_hashmap(
         &self,
     ) -> HashMap<Script, &IncomingSwapCoin> {
-        self.incoming_swap_coins
+        self.incoming_swapcoins
             .values()
             .map(|isc| {
                 (
@@ -1034,7 +1034,7 @@ impl Wallet {
             .map_err(|e| Error::Rpc(e))?;
 
         let completed_coinswap_hashvalues = self
-            .incoming_swap_coins
+            .incoming_swapcoins
             .values()
             .filter(|sc| sc.other_privkey.is_some())
             .map(|sc| sc.get_hashvalue())
@@ -1114,7 +1114,7 @@ impl Wallet {
             .map_err(|e| Error::Rpc(e))?;
         let listunspent = rpc.list_unspent(Some(0), Some(9999999), None, None, None)?;
 
-        let (incoming_swap_coins_utxos, outgoing_swap_coins_utxos): (Vec<_>, Vec<_>) = listunspent
+        let (incoming_swapcoins_utxos, outgoing_swapcoins_utxos): (Vec<_>, Vec<_>) = listunspent
             .iter()
             .map(|u| {
                 (
@@ -1127,11 +1127,11 @@ impl Wallet {
             .partition(|isc_osc_u| isc_osc_u.0.is_some());
 
         Ok((
-            incoming_swap_coins_utxos
+            incoming_swapcoins_utxos
                 .iter()
                 .map(|isc_osc_u| (*isc_osc_u.0.unwrap(), isc_osc_u.2.clone()))
                 .collect::<Vec<(&IncomingSwapCoin, ListUnspentResultEntry)>>(),
-            outgoing_swap_coins_utxos
+            outgoing_swapcoins_utxos
                 .iter()
                 .map(|isc_osc_u| (*isc_osc_u.1.unwrap(), isc_osc_u.2.clone()))
                 .collect::<Vec<(&OutgoingSwapCoin, ListUnspentResultEntry)>>(),

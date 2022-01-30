@@ -213,9 +213,9 @@ async fn test_standard_coinswap() {
         Wallet::load_wallet_from_file(&MAKER2, WalletSyncAddressAmount::Testing).unwrap();
 
     // Check assertions
-    assert_eq!(taker_wallet.get_swap_coins_count(), 6);
-    assert_eq!(maker1_wallet.get_swap_coins_count(), 6);
-    assert_eq!(maker2_wallet.get_swap_coins_count(), 6);
+    assert_eq!(taker_wallet.get_swapcoins_count(), 6);
+    assert_eq!(maker1_wallet.get_swapcoins_count(), 6);
+    assert_eq!(maker2_wallet.get_swapcoins_count(), 6);
 
     let rpc = teleport::get_bitcoin_rpc().unwrap();
 
