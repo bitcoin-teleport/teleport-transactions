@@ -198,20 +198,17 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
         println!("= incomplete coinswaps =");
         for (hashvalue, (utxo_incoming_swapcoins, utxo_outgoing_swapcoins)) in incomplete_coinswaps
         {
-            let balance: Amount = utxo_incoming_swapcoins
+            let incoming_swapcoins_balance: Amount = utxo_incoming_swapcoins
                 .iter()
-                .map(|(l, i)| (l, (*i as &dyn SwapCoin)))
-                .chain(
-                    utxo_outgoing_swapcoins
-                        .iter()
-                        .map(|(l, o)| (l, (*o as &dyn SwapCoin))),
-                )
                 .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
+            let outgoing_swapcoins_balance: Amount = utxo_outgoing_swapcoins
+                .iter()
+                .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
+
             println!(
                 "{:16} {:8} {:8} {:<15} {:<7} value",
                 "coin", "type", "preimage", "locktime/blocks", "conf",
             );
-
             for ((utxo, swapcoin), contract_type) in utxo_incoming_swapcoins
                 .iter()
                 .map(|(l, i)| (l, (*i as &dyn SwapCoin)))
@@ -240,9 +237,11 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
                 );
             }
             println!(
-                "hashvalue = {}\ntotal balance = {}",
-                &hashvalue.to_hex()[..],
-                balance
+                "outgoing balance = {}\namount earned if coinswap successful = {}\nhashvalue = {}",
+                outgoing_swapcoins_balance,
+                (incoming_swapcoins_balance.to_signed().unwrap()
+                    - outgoing_swapcoins_balance.to_signed().unwrap()),
+                &hashvalue.to_hex()[..]
             );
         }
     }
