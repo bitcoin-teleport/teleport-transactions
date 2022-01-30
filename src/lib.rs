@@ -236,11 +236,16 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
                     utxo.amount
                 );
             }
+            if incoming_swapcoins_balance != Amount::ZERO {
+                println!(
+                    "amount earned if coinswap successful = {}",
+                    (incoming_swapcoins_balance.to_signed().unwrap()
+                        - outgoing_swapcoins_balance.to_signed().unwrap()),
+                );
+            }
             println!(
-                "outgoing balance = {}\namount earned if coinswap successful = {}\nhashvalue = {}",
+                "outgoing balance = {}\nhashvalue = {}",
                 outgoing_swapcoins_balance,
-                (incoming_swapcoins_balance.to_signed().unwrap()
-                    - outgoing_swapcoins_balance.to_signed().unwrap()),
                 &hashvalue.to_hex()[..]
             );
         }
