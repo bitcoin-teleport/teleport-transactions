@@ -7,7 +7,7 @@ use structopt::StructOpt;
 
 use teleport;
 use teleport::maker_protocol::MakerBehavior;
-use teleport::wallet_direct_send::{CoinToSpend, Destination, SendAmount};
+use teleport::direct_send::{CoinToSpend, Destination, SendAmount};
 use teleport::wallet_sync::WalletSyncAddressAmount;
 use teleport::watchtower_protocol::{ContractTransaction, ContractsInfo};
 

@@ -16,8 +16,8 @@ use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 pub mod wallet_sync;
 use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount};
 
-pub mod wallet_direct_send;
-use wallet_direct_send::{CoinToSpend, Destination, SendAmount};
+pub mod direct_send;
+use direct_send::{CoinToSpend, Destination, SendAmount};
 
 pub mod contracts;
 use contracts::{read_locktime_from_contract, SwapCoin};
