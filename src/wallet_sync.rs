@@ -3,7 +3,7 @@
 // makers will only ever sync this way, but one day takers may sync in other
 // ways too such as a lightweight wallet method
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::Read;
 use std::path::Path;
@@ -484,7 +484,10 @@ impl Wallet {
             outgoing_swapcoins: Vec::new(),
             prevout_to_contract_map: HashMap::<OutPoint, Script>::new(),
         };
-        let wallet_file = File::create(wallet_file_name)?;
+        let wallet_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(wallet_file_name)?;
         serde_json::to_writer(wallet_file, &wallet_file_data).map_err(|e| io::Error::from(e))?;
         Ok(())
     }

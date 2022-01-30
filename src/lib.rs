@@ -79,28 +79,15 @@ pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
             return Ok(());
         }
     };
-
     println!("input seed phrase extension (or leave blank for none): ");
     let mut extension = String::new();
     io::stdin().read_line(&mut extension)?;
     extension = extension.trim().to_string();
-
     let mnemonic =
         mnemonic::Mnemonic::new_random(bitcoin_wallet::account::MasterKeyEntropy::Sufficient)
             .unwrap();
-
-    println!("Write down this seed phrase =\n{}", mnemonic.to_string());
-
-    if !extension.trim().is_empty() {
-        println!("And this extension =\n\"{}\"", extension);
-    }
-
-    println!(
-        "\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
-        The teleport wallet file is needed to backup swapcoins"
-    );
-
-    Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension).unwrap();
+    Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension.clone())
+        .unwrap();
 
     let w = match Wallet::load_wallet_from_file(&wallet_file_name, WalletSyncAddressAmount::Normal)
     {
@@ -117,6 +104,16 @@ pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
         &Vec::<_>::new(),
     )
     .unwrap();
+
+    println!("Write down this seed phrase =\n{}", mnemonic.to_string());
+    if !extension.trim().is_empty() {
+        println!("And this extension =\n\"{}\"", extension);
+    }
+    println!(
+        "\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
+        The teleport wallet file is needed to backup swapcoins"
+    );
+
     Ok(())
 }
 
