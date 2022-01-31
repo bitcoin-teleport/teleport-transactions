@@ -82,6 +82,7 @@ pub struct Wallet {
     initial_address_import_count: usize,
     incoming_swapcoins: HashMap<Script, IncomingSwapCoin>,
     outgoing_swapcoins: HashMap<Script, OutgoingSwapCoin>,
+    offer_maxsize_cache: u64,
 }
 
 pub enum WalletSyncAddressAmount {
@@ -546,6 +547,7 @@ impl Wallet {
                 .iter()
                 .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
                 .collect::<HashMap<Script, OutgoingSwapCoin>>(),
+            offer_maxsize_cache: 0,
         };
         Ok(wallet)
     }
@@ -1187,10 +1189,15 @@ impl Wallet {
         )?)
     }
 
-    pub fn get_offer_maxsize(&self, rpc: Arc<Client>) -> Result<u64, Error> {
+    pub fn refresh_offer_maxsize_cache(&mut self, rpc: Arc<Client>) -> Result<(), Error> {
         let utxos = self.list_unspent_from_wallet(&rpc, false)?;
         let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
-        Ok(balance.as_sat())
+        self.offer_maxsize_cache = balance.as_sat();
+        Ok(())
+    }
+
+    pub fn get_offer_maxsize_cache(&self) -> u64 {
+        self.offer_maxsize_cache
     }
 
     pub fn get_tweakable_keypair(&self) -> (SecretKey, PublicKey) {

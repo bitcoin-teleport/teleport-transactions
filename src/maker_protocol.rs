@@ -90,6 +90,10 @@ async fn run(
         "Running maker with special behavior = {:?}",
         config.maker_behavior
     );
+    wallet
+        .write()
+        .unwrap()
+        .refresh_offer_maxsize_cache(Arc::clone(&rpc))?;
 
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
@@ -119,7 +123,7 @@ async fn run(
                 break Err(client_err.unwrap());
             },
             _ = sleep(Duration::from_secs(config.rpc_ping_interval)) => {
-                let rpc_ping_success = rpc.get_best_block_hash().is_ok();
+                let rpc_ping_success = wallet.write().unwrap().refresh_offer_maxsize_cache(Arc::clone(&rpc)).is_ok();
                 let watchtowers_ping_interval = Duration::from_secs(config.watchtower_ping_interval);
                 let (watchtowers_ping_success, debug_msg) = if Instant::now()
                         .saturating_duration_since(last_watchtowers_ping)
@@ -283,7 +287,7 @@ async fn handle_message(
         }
         ExpectedMessage::NewlyConnectedTaker => match request {
             TakerToMakerMessage::GiveOffer(_) => {
-                let max_size = wallet.read().unwrap().get_offer_maxsize(rpc)?;
+                let max_size = wallet.read().unwrap().get_offer_maxsize_cache();
                 let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
                 connection_state.allowed_message = ExpectedMessage::SignSendersContractTx;
                 Some(MakerToTakerMessage::Offer(Offer {
