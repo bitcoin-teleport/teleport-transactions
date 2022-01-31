@@ -47,6 +47,7 @@ pub struct MakerConfig {
     pub watchtower_ping_interval: u64,
     pub maker_behavior: MakerBehavior,
     pub kill_flag: Arc<RwLock<bool>>,
+    pub idle_connection_timeout: u64,
 }
 
 #[tokio::main]
@@ -157,6 +158,7 @@ async fn run(
         let client_wallet = Arc::clone(&wallet);
         let server_loop_comms_tx = server_loop_comms_tx.clone();
         let maker_behavior = config.maker_behavior;
+        let idle_connection_timeout = config.idle_connection_timeout;
 
         tokio::spawn(async move {
             let (socket_reader, mut socket_writer) = socket.split();
@@ -184,16 +186,24 @@ async fn run(
 
             loop {
                 let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(n) if n == 0 => {
-                        log::info!("[{}] Reached EOF", addr.port());
+                select! {
+                    readline_ret = reader.read_line(&mut line) => {
+                        match readline_ret {
+                            Ok(n) if n == 0 => {
+                                log::info!("[{}] Reached EOF", addr.port());
+                                break;
+                            }
+                            Ok(_n) => (),
+                            Err(e) => {
+                                log::error!("error reading from socket: {:?}", e);
+                                break;
+                            }
+                        }
+                    },
+                    _ = sleep(Duration::from_secs(idle_connection_timeout)) => {
+                        log::info!("[{}] Idle connection closed", addr.port());
                         break;
-                    }
-                    Ok(_n) => (),
-                    Err(e) => {
-                        log::error!("error reading from socket: {:?}", e);
-                        break;
-                    }
+                    },
                 };
 
                 line = line.trim_end().to_string();

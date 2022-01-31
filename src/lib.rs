@@ -391,6 +391,7 @@ pub fn run_maker(
         } else {
             kill_flag.unwrap().clone()
         },
+        idle_connection_timeout: 300,
     };
     maker_protocol::start_maker(rpc_ptr, wallet_ptr, config);
 }
