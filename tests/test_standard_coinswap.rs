@@ -183,6 +183,9 @@ async fn test_standard_coinswap() {
         teleport::run_taker(
             &PathBuf::from_str(TAKER).unwrap(),
             WalletSyncAddressAmount::Testing,
+            500000,
+            2,
+            3,
         );
     });
 

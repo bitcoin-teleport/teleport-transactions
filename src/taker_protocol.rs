@@ -46,37 +46,40 @@ use crate::watchtower_protocol::{
     check_for_broadcasted_contract_txes, ContractTransaction, ContractsInfo,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub struct TakerConfig {
+    pub send_amount: u64,
+    pub maker_count: u16,
+    pub tx_count: u32,
+}
+
 #[tokio::main]
-pub async fn start_taker(rpc: &Client, wallet: &mut Wallet) {
-    match run(rpc, wallet).await {
+pub async fn start_taker(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) {
+    match run(rpc, wallet, config).await {
         Ok(_o) => (),
         Err(e) => log::error!("err {:?}", e),
     };
 }
 
-async fn run(rpc: &Client, wallet: &mut Wallet) -> Result<(), Error> {
+async fn run(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) -> Result<(), Error> {
     let offers_addresses = sync_offerbook().await;
     log::info!("<=== Got Offers");
     log::debug!("Offers : {:#?}", offers_addresses);
-    send_coinswap(rpc, wallet, &offers_addresses).await?;
+    send_coinswap(rpc, wallet, config, &offers_addresses).await?;
     Ok(())
 }
 
 async fn send_coinswap(
     rpc: &Client,
     wallet: &mut Wallet,
+    config: TakerConfig,
     all_maker_offers_addresses: &Vec<OfferAddress>,
 ) -> Result<(), Error> {
-    let amount = 500000;
-    let my_tx_count: u32 = 3;
-    let maker_tx_count: u32 = 3;
-    let maker_count: u16 = 2;
-
     let mut preimage = [0u8; PREIMAGE_LEN];
     OsRng.fill_bytes(&mut preimage);
     let hashvalue = Hash160::hash(&preimage);
 
-    let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count;
+    let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * config.maker_count;
 
     let mut maker_offers_addresses = all_maker_offers_addresses
         .iter()
@@ -100,12 +103,12 @@ async fn send_coinswap(
             this_maker_hashlock_privkeys,
         ) = generate_maker_multisig_and_hashlock_keys(
             &first_maker.offer.tweakable_point,
-            my_tx_count,
+            config.tx_count,
         );
         let (my_funding_txes, outgoing_swapcoins) = wallet
             .initalize_coinswap(
                 rpc,
-                amount,
+                config.send_amount,
                 &first_maker_multisig_pubkeys,
                 &first_maker_hashlock_pubkeys,
                 hashvalue,
@@ -180,12 +183,12 @@ async fn send_coinswap(
 
     let mut last_checked_block_height: Option<u64> = None;
 
-    for maker_index in 0..maker_count {
-        let is_taker_next_peer = maker_index == maker_count - 1;
+    for maker_index in 0..config.maker_count {
+        let is_taker_next_peer = maker_index == config.maker_count - 1;
         let is_taker_previous_peer = maker_index == 0;
 
         let maker_refund_locktime =
-            REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1);
+            REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * (config.maker_count - maker_index - 1);
         let (
             this_maker_multisig_redeemscripts,
             this_maker_contract_redeemscripts,
@@ -225,7 +228,7 @@ async fn send_coinswap(
                     next_peer_hashlock_pubkeys,
                     next_peer_hashlock_keys_or_nonces,
                 ) = if is_taker_next_peer {
-                    generate_my_multisig_and_hashlock_keys(maker_tx_count)
+                    generate_my_multisig_and_hashlock_keys(config.tx_count)
                 } else {
                     next_maker =
                         choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
@@ -233,7 +236,7 @@ async fn send_coinswap(
                     //i.e. if its ever used when is_taker_next_peer == true, then thats a bug
                     generate_maker_multisig_and_hashlock_keys(
                         &next_maker.offer.tweakable_point,
-                        maker_tx_count,
+                        config.tx_count,
                     )
                 };
                 log::info!("===> Sending ProofOfFunding to {}", current_maker.address);
@@ -443,7 +446,7 @@ async fn send_coinswap(
     let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
     for (index, maker_address) in active_maker_addresses.iter().enumerate() {
         let is_taker_previous_peer = index == 0;
-        let is_taker_next_peer = (index as u16) == maker_count - 1;
+        let is_taker_next_peer = (index as u16) == config.maker_count - 1;
 
         let senders_multisig_redeemscripts = if is_taker_previous_peer {
             get_multisig_redeemscripts_from_swapcoins(&outgoing_swapcoins)

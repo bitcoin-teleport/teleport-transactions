@@ -68,13 +68,13 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-* On one terminal run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-maker 6102`. You should see the message `listening on port 6102`.
-
-* On another terminal run another maker server with `cargo run -- --wallet-file-name=maker2.teleport run-maker 16102`. You should see the message `listening on port 16102`.
-
 * On another terminal run a watchtower with `cargo run -- run-watchtower`. You should see the message `Starting teleport watchtower`. In the teleport project contracts are enforced with one or more watchtowers, which are required for the coinswap protocol to be secure against the maker's coins being stolen.
 
-* On another terminal start a coinswap with `cargo run -- --wallet-file-name=taker.teleport coinswap-send`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell regtest to generate another block (or just wait if you're using testnet).
+* On one terminal run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-maker 6102`. You should see the message `Listening on port 6102`.
+
+* On another terminal run another maker server with `cargo run -- --wallet-file-name=maker2.teleport run-maker 16102`. You should see the message `Listening on port 16102`.
+
+* On another terminal start a coinswap with `cargo run -- --wallet-file-name=taker.teleport do-coinswap 500000`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell regtest to generate another block (or just wait if you're using testnet).
 
 * Once you see the message `successfully completed coinswap` on all terminals then check the wallet balance again to see the result of the coinswap. Example:
 
@@ -116,8 +116,6 @@ c6564e..40fb64:1 bcrt1qshwp....3x8qjtwdf6 swapcoin 1       0.00050501 BTC
 coin count = 6
 total balance = 0.14974828 BTC
 ```
-
-* Edit the file `taker_protocol.rs` at the start of the function `send_coinswap` to edit parameters like the total coinswap amount, number of makers to do a multi-hop coinswap with and number of transactions per hop.
 
 * To switch between regtest and testnet, edit the constant `NETWORK` which is found near the top of the file `src/wallet_sync.rs`. To edit the coinswap send amount, or the number of taker and maker transactions, look in the file `src/taker_protocol.rs` near the top of the function `send_coinswap`.
 

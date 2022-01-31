@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 use teleport;
-use teleport::maker_protocol::MakerBehavior;
 use teleport::direct_send::{CoinToSpend, Destination, SendAmount};
+use teleport::maker_protocol::MakerBehavior;
 use teleport::wallet_sync::WalletSyncAddressAmount;
 use teleport::watchtower_protocol::{ContractTransaction, ContractsInfo};
 
@@ -58,7 +58,14 @@ enum Subcommand {
     },
 
     /// Runs Taker.
-    CoinswapSend,
+    DoCoinswap {
+        /// Amount to send (in sats)
+        send_amount: u64, //TODO convert this to SendAmount
+        /// How many makers to route through, default 2
+        maker_count: Option<u16>,
+        /// How many transactions per hop, default 3
+        tx_count: Option<u32>,
+    },
 
     /// Broadcast contract transactions for incomplete coinswap. Locked up bitcoins are
     /// returned to your wallet after the timeout
@@ -123,8 +130,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None,
             );
         }
-        Subcommand::CoinswapSend => {
-            teleport::run_taker(&args.wallet_file_name, WalletSyncAddressAmount::Normal);
+        Subcommand::DoCoinswap {
+            send_amount,
+            maker_count,
+            tx_count,
+        } => {
+            teleport::run_taker(
+                &args.wallet_file_name,
+                WalletSyncAddressAmount::Normal,
+                send_amount,
+                maker_count.unwrap_or(2),
+                tx_count.unwrap_or(3),
+            );
         }
         Subcommand::RecoverFromIncompleteCoinswap { hashvalue } => {
             teleport::recover_from_incomplete_coinswap(

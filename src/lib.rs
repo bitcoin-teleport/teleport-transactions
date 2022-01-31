@@ -25,10 +25,12 @@ use contracts::{read_locktime_from_contract, SwapCoin};
 pub mod maker_protocol;
 use maker_protocol::MakerBehavior;
 
+pub mod taker_protocol;
+use taker_protocol::TakerConfig;
+
 pub mod error;
 pub mod messages;
 pub mod offerbook_sync;
-pub mod taker_protocol;
 pub mod watchtower_client;
 pub mod watchtower_protocol;
 
@@ -393,7 +395,13 @@ pub fn run_maker(
     maker_protocol::start_maker(rpc_ptr, wallet_ptr, config);
 }
 
-pub fn run_taker(wallet_file_name: &PathBuf, sync_amount: WalletSyncAddressAmount) {
+pub fn run_taker(
+    wallet_file_name: &PathBuf,
+    sync_amount: WalletSyncAddressAmount,
+    send_amount: u64,
+    maker_count: u16,
+    tx_count: u32,
+) {
     let rpc = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
@@ -409,7 +417,15 @@ pub fn run_taker(wallet_file_name: &PathBuf, sync_amount: WalletSyncAddressAmoun
         }
     };
     wallet.startup_sync(&rpc).unwrap();
-    taker_protocol::start_taker(&rpc, &mut wallet);
+    taker_protocol::start_taker(
+        &rpc,
+        &mut wallet,
+        TakerConfig {
+            send_amount,
+            maker_count,
+            tx_count,
+        },
+    );
 }
 
 pub fn recover_from_incomplete_coinswap(
