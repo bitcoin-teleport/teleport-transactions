@@ -26,10 +26,20 @@ use crate::wallet_sync::{
     create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet, NETWORK,
 };
 
-//TODO should be configurable somehow
-//relatively low value for now so that its easier to test on regtest
-pub const REFUND_LOCKTIME: u16 = 6; //in blocks
-pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
+//relatively simple handling of miner fees for now, each funding transaction is considered
+// to have the same size, and taker will pay all the maker's miner fees based on that
+//taker will choose what fee rate they will use, and how many funding transactions they want
+// the makers to create
+//this doesnt take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
+// but all those complications will go away when we move to ecdsa2p and scriptless scripts
+// so theres no point adding complications for something that we'll hopefully get rid of soon
+//this size here is for a tx with 2 p2wpkh outputs, 3 singlesig inputs and 1 2of2 multisig input
+// if the maker can get stuff confirmed cheaper than this then they can keep that money
+// if the maker ends up paying more then thats their problem
+// we could avoid this guessing by adding one more round trip to the protocol where the maker
+// calculates exactly how big the transactions will be and then taker knows exactly the miner fee
+// to pay for
+pub const MAKER_FUNDING_TX_VBYTE_SIZE: u64 = 372;
 
 //like the Incoming/OutgoingSwapCoin structs but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
@@ -55,6 +65,18 @@ pub trait SwapCoin {
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), Error>;
     fn is_hash_preimage_known(&self) -> bool;
+}
+
+pub fn calculate_coinswap_fee(
+    absolute_fee_sat: u64,
+    amount_relative_fee_ppb: u64,
+    time_relative_fee_ppb: u64,
+    total_funding_amount: u64,
+    time_in_blocks: u64,
+) -> u64 {
+    absolute_fee_sat
+        + (total_funding_amount * amount_relative_fee_ppb / 1_000_000_000)
+        + (time_in_blocks * time_relative_fee_ppb / 1_000_000_000)
 }
 
 pub fn calculate_maker_pubkey_from_nonce(
@@ -214,8 +236,8 @@ fn is_contract_out_valid(
     timelock_pubkey: &PublicKey,
     hashvalue: Hash160,
     locktime: u16,
+    minimum_locktime: u16,
 ) -> Result<(), Error> {
-    let minimum_locktime = 2; //TODO should be in config file or something
     if minimum_locktime > locktime {
         return Err(Error::Protocol("locktime too short"));
     }
@@ -243,6 +265,7 @@ pub fn validate_and_sign_senders_contract_tx(
     funding_input_value: u64,
     hashvalue: Hash160,
     locktime: u16,
+    minimum_locktime: u16,
     tweakable_privkey: &SecretKey,
     wallet: &mut Wallet,
 ) -> Result<Signature, Error> {
@@ -274,6 +297,7 @@ pub fn validate_and_sign_senders_contract_tx(
         &timelock_pubkey,
         hashvalue,
         locktime,
+        minimum_locktime,
     )?; //note question mark here propagating the error upwards
 
     wallet.add_prevout_and_contract_to_cache(
@@ -317,6 +341,7 @@ pub fn verify_proof_of_funding(
     funding_info: &ConfirmedCoinSwapTxInfo,
     funding_output_index: u32,
     next_locktime: u16,
+    min_contract_react_time: u16,
     //returns my_multisig_privkey, other_multisig_pubkey, my_hashlock_privkey
 ) -> Result<(SecretKey, PublicKey, SecretKey), Error> {
     //check the funding_tx exists and was really confirmed
@@ -365,9 +390,7 @@ pub fn verify_proof_of_funding(
         .ok_or(Error::Protocol("unable to read locktime from contract"))?;
     //this is the time the maker or his watchtowers have to be online, read
     // the hash preimage from the blockchain and broadcast their own tx
-    //TODO put this in a config file perhaps, and have it advertised to takers
-    const CONTRACT_REACT_TIME: u16 = 3;
-    if locktime - next_locktime < CONTRACT_REACT_TIME {
+    if locktime - next_locktime < min_contract_react_time {
         return Err(Error::Protocol("locktime too short"));
     }
 
@@ -908,10 +931,15 @@ mod test {
         let (pub1, pub2) = read_pubkeys_from_contract_reedimscript(&contract_script).unwrap();
 
         // Validates if contract outpoint is correct
-        assert!(
-            is_contract_out_valid(&contract_tx.output[0], &pub1, &pub2, hashvalue, locktime)
-                .is_ok()
-        );
+        assert!(is_contract_out_valid(
+            &contract_tx.output[0],
+            &pub1,
+            &pub2,
+            hashvalue,
+            locktime,
+            2
+        )
+        .is_ok());
 
         // Validate if the contract transaction is spending correctl utxo
         assert!(validate_contract_tx(&contract_tx, Some(&spending_utxo), &contract_script).is_ok());

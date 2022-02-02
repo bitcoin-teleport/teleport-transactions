@@ -66,6 +66,7 @@ pub struct ProofOfFunding {
     pub confirmed_funding_txes: Vec<ConfirmedCoinSwapTxInfo>,
     pub next_coinswap_info: Vec<NextCoinSwapTxInfo>,
     pub next_locktime: u16,
+    pub next_fee_rate: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,8 +125,11 @@ pub struct MakerHello {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Offer {
-    pub absolute_fee: u32,
-    pub amount_relative_fee: f32,
+    pub absolute_fee_sat: u64,
+    pub amount_relative_fee_ppb: u64,
+    pub time_relative_fee_ppb: u64,
+    pub required_confirms: i32,
+    pub minimum_locktime: u16,
     pub max_size: u64,
     pub min_size: u64,
     pub tweakable_point: PublicKey,

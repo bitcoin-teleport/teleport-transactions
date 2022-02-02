@@ -20,7 +20,8 @@ use itertools::izip;
 use crate::contracts;
 use crate::contracts::SwapCoin;
 use crate::contracts::{
-    find_funding_output, read_hashvalue_from_contract, read_locktime_from_contract,
+    calculate_coinswap_fee, find_funding_output, read_hashvalue_from_contract,
+    read_locktime_from_contract, MAKER_FUNDING_TX_VBYTE_SIZE,
 };
 use crate::error::Error;
 use crate::messages::{
@@ -32,6 +33,14 @@ use crate::messages::{
 use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin};
 use crate::watchtower_client::{ping_watchtowers, register_coinswap_with_watchtowers};
 use crate::watchtower_protocol::{ContractTransaction, ContractsInfo};
+
+//TODO this goes in the config file
+const ABSOLUTE_FEE_SAT: u64 = 1000;
+const AMOUNT_RELATIVE_FEE_PPB: u64 = 10_000_000;
+const TIME_RELATIVE_FEE_PPB: u64 = 100_000;
+const REQUIRED_CONFIRMS: i32 = 1;
+const MINIMUM_LOCKTIME: u16 = 3;
+const MIN_SIZE: u64 = 10000;
 
 //used to configure the maker do weird things for testing
 #[derive(Debug, Clone, Copy)]
@@ -301,10 +310,13 @@ async fn handle_message(
                 let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
                 connection_state.allowed_message = ExpectedMessage::SignSendersContractTx;
                 Some(MakerToTakerMessage::Offer(Offer {
-                    absolute_fee: 1000,
-                    amount_relative_fee: 0.005,
+                    absolute_fee_sat: ABSOLUTE_FEE_SAT,
+                    amount_relative_fee_ppb: AMOUNT_RELATIVE_FEE_PPB,
+                    time_relative_fee_ppb: TIME_RELATIVE_FEE_PPB,
+                    required_confirms: REQUIRED_CONFIRMS,
+                    minimum_locktime: MINIMUM_LOCKTIME,
                     max_size,
-                    min_size: 10000,
+                    min_size: MIN_SIZE,
                     tweakable_point,
                 }))
             }
@@ -447,6 +459,7 @@ fn handle_sign_senders_contract_tx(
             txinfo.funding_input_value,
             message.hashvalue,
             message.locktime,
+            MINIMUM_LOCKTIME,
             &tweakable_privkey,
             &mut wallet.write().unwrap(),
         )?;
@@ -498,6 +511,7 @@ fn handle_proof_of_funding(
             &funding_info,
             funding_output_index,
             proof.next_locktime,
+            MINIMUM_LOCKTIME,
         )?;
         incoming_swapcoin_keys.push(verify_result);
     }
@@ -567,49 +581,67 @@ fn handle_proof_of_funding(
             ));
     }
 
-    //set up the next coinswap address in the route
-    let coinswap_fees = 10000; //TODO calculate them properly, and output log "potentially earned"
+    //set up the next coinswap in the route
     let incoming_amount = funding_outputs.iter().map(|o| o.value).sum::<u64>();
-    log::debug!("incoming amount = {}", incoming_amount);
-    let amount = incoming_amount - coinswap_fees;
+    let coinswap_fees = calculate_coinswap_fee(
+        ABSOLUTE_FEE_SAT,
+        AMOUNT_RELATIVE_FEE_PPB,
+        TIME_RELATIVE_FEE_PPB,
+        incoming_amount,
+        1, //time_in_blocks just 1 for now
+    );
+    let miner_fees_paid_by_taker =
+        MAKER_FUNDING_TX_VBYTE_SIZE * proof.next_fee_rate * (proof.next_coinswap_info.len() as u64)
+            / 1000;
+    let outgoing_amount = incoming_amount - coinswap_fees - miner_fees_paid_by_taker;
+
+    let (my_funding_txes, outgoing_swapcoins, total_miner_fee) =
+        wallet.write().unwrap().initalize_coinswap(
+            &rpc,
+            outgoing_amount,
+            &proof
+                .next_coinswap_info
+                .iter()
+                .map(|nci| nci.next_coinswap_multisig_pubkey)
+                .collect::<Vec<PublicKey>>(),
+            &proof
+                .next_coinswap_info
+                .iter()
+                .map(|nci| nci.next_hashlock_pubkey)
+                .collect::<Vec<PublicKey>>(),
+            hashvalue,
+            proof.next_locktime,
+            proof.next_fee_rate,
+        )?;
 
     log::info!(
-        concat!(
-            "proof of funding valid. amount={}, incoming_locktime={} blocks, ",
-            "hashvalue={}, funding txes = {:?} creating own funding txes, outgoing_locktime={}",
-            "blocks "
-        ),
-        Amount::from_sat(incoming_amount),
-        read_locktime_from_contract(&proof.confirmed_funding_txes[0].contract_redeemscript)
-            .unwrap(),
-        //unwrap() as format of contract_redeemscript already checked in verify_proof_of_funding
-        hashvalue,
+        "Proof of funding valid. Incoming funding txes, txids = {:?}",
         proof
             .confirmed_funding_txes
             .iter()
             .map(|cft| cft.funding_tx.txid())
-            .collect::<Vec<Txid>>(),
-        proof.next_locktime
+            .collect::<Vec<Txid>>()
     );
-
-    let (my_funding_txes, outgoing_swapcoins) = wallet.write().unwrap().initalize_coinswap(
-        &rpc,
-        amount,
-        &proof
-            .next_coinswap_info
-            .iter()
-            .map(|nci| nci.next_coinswap_multisig_pubkey)
-            .collect::<Vec<PublicKey>>(),
-        &proof
-            .next_coinswap_info
-            .iter()
-            .map(|nci| nci.next_hashlock_pubkey)
-            .collect::<Vec<PublicKey>>(),
-        hashvalue,
+    log::info!(
+        "incoming_amount={}, incoming_locktime={}, hashvalue={}",
+        Amount::from_sat(incoming_amount),
+        read_locktime_from_contract(&proof.confirmed_funding_txes[0].contract_redeemscript)
+            .unwrap(),
+        //unwrap() as format of contract_redeemscript already checked in verify_proof_of_funding
+        hashvalue
+    );
+    log::info!(
+        concat!(
+            "outgoing_amount={}, outgoing_locktime={}, miner fees paid by taker={}, ",
+            "actual miner fee={}, coinswap_fees={}, POTENTIALLY EARNED={}"
+        ),
+        Amount::from_sat(outgoing_amount),
         proof.next_locktime,
-    )?;
-
-    log::debug!("My Funding Transactions = {:#?}", my_funding_txes);
+        Amount::from_sat(miner_fees_paid_by_taker),
+        Amount::from_sat(total_miner_fee),
+        Amount::from_sat(coinswap_fees),
+        Amount::from_sat(incoming_amount - outgoing_amount - total_miner_fee)
+    );
 
     connection_state.pending_funding_txes = Some(my_funding_txes);
     connection_state.outgoing_swapcoins = Some(outgoing_swapcoins);

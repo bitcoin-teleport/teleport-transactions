@@ -25,9 +25,9 @@ use itertools::izip;
 use crate::contracts;
 use crate::contracts::SwapCoin;
 use crate::contracts::{
-    create_contract_redeemscript, create_receivers_contract_tx, find_funding_output,
-    read_pubkeys_from_multisig_redeemscript, sign_contract_tx, validate_contract_tx,
-    WatchOnlySwapCoin, REFUND_LOCKTIME, REFUND_LOCKTIME_STEP,
+    calculate_coinswap_fee, create_contract_redeemscript, create_receivers_contract_tx,
+    find_funding_output, read_pubkeys_from_multisig_redeemscript, sign_contract_tx,
+    validate_contract_tx, WatchOnlySwapCoin, MAKER_FUNDING_TX_VBYTE_SIZE,
 };
 use crate::error::Error;
 use crate::messages::{
@@ -46,11 +46,17 @@ use crate::watchtower_protocol::{
     check_for_broadcasted_contract_txes, ContractTransaction, ContractsInfo,
 };
 
+//relatively low value for now so that its easier to test on regtest
+pub const REFUND_LOCKTIME: u16 = 3; //in blocks
+pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
+
 #[derive(Debug, Clone, Copy)]
 pub struct TakerConfig {
     pub send_amount: u64,
     pub maker_count: u16,
     pub tx_count: u32,
+    pub required_confirms: i32,
+    pub fee_rate: u64,
 }
 
 #[tokio::main]
@@ -105,7 +111,7 @@ async fn send_coinswap(
             &first_maker.offer.tweakable_point,
             config.tx_count,
         );
-        let (my_funding_txes, outgoing_swapcoins) = wallet
+        let (my_funding_txes, outgoing_swapcoins, _my_total_miner_fee) = wallet
             .initalize_coinswap(
                 rpc,
                 config.send_amount,
@@ -113,6 +119,7 @@ async fn send_coinswap(
                 &first_maker_hashlock_pubkeys,
                 hashvalue,
                 first_swap_locktime,
+                config.fee_rate,
             )
             .unwrap();
         let first_maker_senders_contract_sigs = match request_senders_contract_tx_signatures(
@@ -159,13 +166,13 @@ async fn send_coinswap(
         log::info!("Broadcasting My Funding Tx: {}", txid);
         assert_eq!(txid, my_funding_tx.txid());
     }
-    log::info!("Waiting for funding Tx to confirm");
     let (mut funding_txes, mut funding_tx_merkleproofs) = wait_for_funding_tx_confirmation(
         rpc,
         &my_funding_txes
             .iter()
             .map(|tx| tx.txid())
             .collect::<Vec<Txid>>(),
+        first_maker.offer.required_confirms,
         &[],
         &mut None,
     )
@@ -244,6 +251,7 @@ async fn send_coinswap(
                     send_proof_of_funding_and_get_contract_txes(
                         &mut socket_reader,
                         &mut socket_writer,
+                        &current_maker,
                         &funding_txes,
                         &funding_tx_merkleproofs,
                         &this_maker_multisig_redeemscripts,
@@ -253,6 +261,7 @@ async fn send_coinswap(
                         &next_peer_multisig_pubkeys,
                         &next_peer_hashlock_pubkeys,
                         maker_refund_locktime,
+                        config.fee_rate,
                         &this_maker_contract_txes,
                         hashvalue,
                     )
@@ -359,7 +368,6 @@ async fn send_coinswap(
         }; //scope ends here closing socket
         active_maker_addresses.push(current_maker.address.clone());
 
-        log::info!("Waiting for funding transaction confirmations",);
         let wait_for_confirm_result = wait_for_funding_tx_confirmation(
             rpc,
             &maker_sign_sender_and_receiver_contracts
@@ -371,6 +379,11 @@ async fn send_coinswap(
                         .txid
                 })
                 .collect::<Vec<Txid>>(),
+            if is_taker_next_peer {
+                config.required_confirms
+            } else {
+                next_maker.offer.required_confirms
+            },
             &watchonly_swapcoins
                 .iter()
                 .map(|watchonly_swapcoin_list| {
@@ -756,11 +769,16 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
 async fn wait_for_funding_tx_confirmation(
     rpc: &Client,
     funding_txids: &[Txid],
+    required_confirmations: i32,
     contract_to_watch: &[Vec<Transaction>],
     last_checked_block_height: &mut Option<u64>,
 ) -> Result<Option<(Vec<Transaction>, Vec<String>)>, Error> {
     let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
     let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
+    log::info!(
+        "Waiting for funding transaction confirmations ({} conf required)",
+        required_confirmations
+    );
     loop {
         for txid in funding_txids {
             if txid_tx_map.contains_key(txid) {
@@ -772,14 +790,18 @@ async fn wait_for_funding_tx_confirmation(
                 Err(_e) => continue,
             };
             //TODO handle confirm<0
-            if gettx.info.confirmations >= 1 {
+            if gettx.info.confirmations >= required_confirmations {
                 txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
                 txid_blockhash_map.insert(*txid, gettx.info.blockhash.unwrap());
-                log::debug!("funding tx {} reached 1 confirmation(s)", txid);
+                log::debug!(
+                    "funding tx {} reached {} confirmation(s)",
+                    txid,
+                    required_confirmations
+                );
             }
         }
         if txid_tx_map.len() == funding_txids.len() {
-            log::info!("Funding Transaction confirmed");
+            log::info!("Funding Transactions confirmed");
             let txes = funding_txids
                 .iter()
                 .map(|txid| txid_tx_map.get(txid).unwrap().clone())
@@ -858,6 +880,7 @@ fn get_swapcoin_multisig_contract_redeemscripts_txes<S: SwapCoin>(
 async fn send_proof_of_funding_and_get_contract_txes(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
+    this_maker: &OfferAddress,
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
     this_maker_multisig_redeemscripts: &[Script],
@@ -866,7 +889,8 @@ async fn send_proof_of_funding_and_get_contract_txes(
     this_maker_hashlock_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_hashlock_pubkeys: &[PublicKey],
-    maker_refund_locktime: u16,
+    next_maker_refund_locktime: u16,
+    next_maker_fee_rate: u64,
     this_maker_contract_txes: &[Transaction],
     hashvalue: Hash160,
 ) -> Result<(SignSendersAndReceiversContractTxes, Vec<Script>), Error> {
@@ -909,7 +933,8 @@ async fn send_proof_of_funding_and_get_contract_txes(
                     },
                 )
                 .collect::<Vec<NextCoinSwapTxInfo>>(),
-            next_locktime: maker_refund_locktime,
+            next_locktime: next_maker_refund_locktime,
+            next_fee_rate: next_maker_fee_rate,
         }),
     )
     .await?;
@@ -941,6 +966,48 @@ async fn send_proof_of_funding_and_get_contract_txes(
             "wrong number of senders contract txes from maker",
         ));
     }
+
+    let funding_tx_values = funding_txes
+        .iter()
+        .zip(this_maker_multisig_redeemscripts.iter())
+        .map(|(makers_funding_tx, multisig_redeemscript)| {
+            find_funding_output(&makers_funding_tx, &multisig_redeemscript)
+                .ok_or(Error::Protocol(
+                    "multisig redeemscript not found in funding tx",
+                ))
+                .map(|txout| txout.1.value)
+        })
+        .collect::<Result<Vec<u64>, Error>>()?;
+    let this_amount = funding_tx_values.iter().sum::<u64>();
+
+    let next_amount = maker_sign_sender_and_receiver_contracts
+        .senders_contract_txes_info
+        .iter()
+        .map(|i| i.funding_amount)
+        .sum::<u64>();
+    let coinswap_fees = calculate_coinswap_fee(
+        this_maker.offer.absolute_fee_sat,
+        this_maker.offer.amount_relative_fee_ppb,
+        this_maker.offer.time_relative_fee_ppb,
+        this_amount,
+        1, //time_in_blocks just 1 for now
+    );
+    let miner_fees_paid_by_taker = MAKER_FUNDING_TX_VBYTE_SIZE
+        * next_maker_fee_rate
+        * (next_peer_multisig_pubkeys.len() as u64)
+        / 1000;
+    let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
+    if calculated_next_amount != next_amount {
+        return Err(Error::Protocol("next_amount incorrect"));
+    }
+    log::info!(
+        "this_amount={} coinswap_fees={} miner_fees_paid_by_taker={} next_amount={}",
+        this_amount,
+        coinswap_fees,
+        miner_fees_paid_by_taker,
+        next_amount
+    );
+
     for (receivers_contract_tx, contract_tx, contract_redeemscript) in izip!(
         maker_sign_sender_and_receiver_contracts
             .receivers_contract_txes
@@ -966,7 +1033,7 @@ async fn send_proof_of_funding_and_get_contract_txes(
                 hashlock_pubkey,
                 &senders_contract_tx_info.timelock_pubkey,
                 hashvalue,
-                maker_refund_locktime,
+                next_maker_refund_locktime,
             )
         })
         .collect::<Vec<Script>>();

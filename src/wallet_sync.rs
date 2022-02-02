@@ -1304,8 +1304,9 @@ impl Wallet {
         rpc: &Client,
         coinswap_amount: u64,
         destinations: &[Address],
-    ) -> Result<(Vec<Transaction>, Vec<u32>, Vec<u64>), Error> {
-        //return funding_txes, position_of_output, output_value
+        fee_rate: u64,
+    ) -> Result<(Vec<Transaction>, Vec<u32>, Vec<u64>, u64), Error> {
+        //return funding_txes, position_of_output, output_value, total_miner_fee
 
         //TODO needs perhaps better way to create multiple txes for
         //multi-tx-coinswap could try multiple ways, and in combination
@@ -1348,6 +1349,7 @@ impl Wallet {
 
         let mut spending_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
+        let mut total_miner_fee = 0;
         for (address, &output_value, change_address) in izip!(
             destinations.iter(),
             output_values.iter(),
@@ -1365,13 +1367,14 @@ impl Wallet {
                 Some(WalletCreateFundedPsbtOptions {
                     include_watching: Some(true),
                     change_address: Some(change_address.clone()),
-                    fee_rate: Some(Amount::from_btc(0.00001).unwrap()),
+                    fee_rate: Some(Amount::from_sat(fee_rate)),
                     ..Default::default()
                 }),
                 None,
             )?;
             let decoded_psbt =
                 rpc.call::<Value>("decodepsbt", &[Value::String(psbt_result.psbt)])?;
+            total_miner_fee += psbt_result.fee.as_sat();
             log::debug!(target: "wallet", "created spending tx, miner fee={}", psbt_result.fee);
 
             //TODO proper error handling, theres many unwrap()s here
@@ -1458,7 +1461,12 @@ impl Wallet {
             payment_output_positions.push(payment_pos);
         }
 
-        Ok((spending_txes, payment_output_positions, output_values))
+        Ok((
+            spending_txes,
+            payment_output_positions,
+            output_values,
+            total_miner_fee,
+        ))
     }
 
     fn create_and_import_coinswap_address(
@@ -1537,16 +1545,17 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
-        locktime: u16, //returns: funding_txes, swapcoins
-    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>), Error> {
+        locktime: u16, //returns: funding_txes, swapcoins, total_miner_fee
+        fee_rate: u64,
+    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, u64), Error> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
             .unzip();
         log::debug!(target: "wallet", "coinswap_addresses = {:#?}", coinswap_addresses);
 
-        let (my_funding_txes, utxo_indexes, funding_amounts) =
-            self.create_spending_txes(rpc, total_coinswap_amount, &coinswap_addresses)?;
+        let (my_funding_txes, utxo_indexes, funding_amounts, total_miner_fee) =
+            self.create_spending_txes(rpc, total_coinswap_amount, &coinswap_addresses, fee_rate)?;
         //for sweeping there would be another function, probably
         //probably have an enum called something like SendAmount which can be
         // an integer but also can be Sweep
@@ -1594,7 +1603,7 @@ impl Wallet {
             ));
         }
 
-        Ok((my_funding_txes, outgoing_swapcoins))
+        Ok((my_funding_txes, outgoing_swapcoins, total_miner_fee))
     }
 }
 

@@ -425,6 +425,8 @@ pub fn run_taker(
             send_amount,
             maker_count,
             tx_count,
+            required_confirms: 1,
+            fee_rate: 1000, //satoshis per thousand vbytes, i.e. 1000 = 1 sat/vb
         },
     );
 }
