@@ -289,7 +289,7 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9745; implement and deploy fidelity bonds in joinmarket, to experiment and gain experience with the concept
 * &#9745; add proper error handling to this project, as right now most of the time it will exit on anything unexpected
 * &#9745; code security, recover from aborts and deveations
-* &#9744; implement coinswap fees and taker paying for miner fees
+* &#9745; implement coinswap fees and taker paying for miner fees
 * &#9744; add support for connecting to makers that arent on localhost, and tor support
 * &#9744; code federated message board seeder servers
 * &#9744; ALPHA RELEASE FOR TESTNET, REGTEST, SIGNET AND MAINNET (FOR THE BRAVE ONES)
