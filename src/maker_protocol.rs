@@ -192,6 +192,7 @@ async fn run(
                 log::error!("io error sending first message: {:?}", e);
                 return;
             }
+            log::info!("[{}] <=== MakerHello", addr.port());
 
             loop {
                 let mut line = String::new();
