@@ -1278,8 +1278,12 @@ impl Wallet {
         }
     }
 
-    fn generate_amount_fractions(count: usize, total_amount: u64, lower_limit: u64) -> Vec<f32> {
-        loop {
+    fn generate_amount_fractions(
+        count: usize,
+        total_amount: u64,
+        lower_limit: u64,
+    ) -> Result<Vec<f32>, Error> {
+        for _ in 0..100000 {
             let mut knives = (1..count)
                 .map(|_| OsRng.next_u32() as f32 / u32::MAX as f32)
                 .collect::<Vec<f32>>();
@@ -1297,9 +1301,12 @@ impl Wallet {
                 .iter()
                 .all(|f| *f * (total_amount as f32) > lower_limit as f32)
             {
-                return fractions;
+                return Ok(fractions);
             }
         }
+        Err(Error::Protocol(
+            "unable to generate amount fractions, probably amount too small",
+        ))
     }
 
     fn create_spending_txes(
@@ -1334,7 +1341,7 @@ impl Wallet {
             destinations.len(),
             coinswap_amount,
             5000, //use 5000 satoshi as the lower limit for now
-        )
+        )?
         .iter()
         .map(|f| (*f * coinswap_amount as f32) as u64)
         .collect::<Vec<u64>>();
