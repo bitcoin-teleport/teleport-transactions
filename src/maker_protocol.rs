@@ -468,14 +468,22 @@ fn handle_sign_senders_contract_tx(
         funding_txids.push(txinfo.senders_contract_tx.input[0].previous_output.txid);
         total_amount += txinfo.funding_input_value;
     }
-    log::info!(
-        "requested contracts amount={}, for funding txids = {:?}",
-        Amount::from_sat(total_amount),
-        funding_txids
-    );
-    Ok(Some(MakerToTakerMessage::SendersContractSig(
-        SendersContractSig { sigs },
-    )))
+    if total_amount < wallet.read().unwrap().get_offer_maxsize_cache() {
+        log::info!(
+            "requested contracts amount={}, for funding txids = {:?}",
+            Amount::from_sat(total_amount),
+            funding_txids
+        );
+        Ok(Some(MakerToTakerMessage::SendersContractSig(
+            SendersContractSig { sigs },
+        )))
+    } else {
+        log::info!(
+            "rejecting contracts for amount={} because not enough funds",
+            Amount::from_sat(total_amount)
+        );
+        Err(Error::Protocol("not enough funds"))
+    }
 }
 
 fn handle_proof_of_funding(
