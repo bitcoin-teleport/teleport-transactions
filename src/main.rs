@@ -49,8 +49,8 @@ enum Subcommand {
     /// Prints receive invoice.
     GetReceiveInvoice,
 
-    /// Runs Maker server
-    RunMaker {
+    /// Runs yield generator aiming to produce an income
+    RunYieldGenerator {
         /// Port to listen on, default is 6102
         port: Option<u16>,
         /// Special behavior used for testing e.g. "closeonsignsenderscontracttx"
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::GetReceiveInvoice => {
             teleport::print_receive_invoice(&args.wallet_file_name);
         }
-        Subcommand::RunMaker {
+        Subcommand::RunYieldGenerator {
             port,
             special_behavior,
         } => {
