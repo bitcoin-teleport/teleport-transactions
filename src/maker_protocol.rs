@@ -468,7 +468,7 @@ fn handle_sign_senders_contract_tx(
         funding_txids.push(txinfo.senders_contract_tx.input[0].previous_output.txid);
         total_amount += txinfo.funding_input_value;
     }
-    if total_amount < wallet.read().unwrap().get_offer_maxsize_cache() {
+    if total_amount >= MIN_SIZE && total_amount < wallet.read().unwrap().get_offer_maxsize_cache() {
         log::info!(
             "requested contracts amount={}, for funding txids = {:?}",
             Amount::from_sat(total_amount),
