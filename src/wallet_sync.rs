@@ -259,7 +259,7 @@ impl IncomingSwapCoin {
         &self,
         destination_address: &Address,
     ) -> Transaction {
-        let miner_fee = 200; //TODO do this calculation properly
+        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -346,7 +346,7 @@ impl OutgoingSwapCoin {
     }
 
     pub fn create_timelock_spend(&self, destination_address: &Address) -> Transaction {
-        let miner_fee = 200; //TODO do this calculation properly
+        let miner_fee = 128 * 1; //128 vbytes x 1 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
