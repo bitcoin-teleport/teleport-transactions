@@ -100,8 +100,8 @@ async fn send_coinswap(
         first_maker_senders_contract_sigs,
     ) = loop {
         //loop to help error handling, loop ends if we run out of makers to try
-        let first_maker =
-            choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
+        let first_maker = choose_next_maker(&mut maker_offers_addresses, config.send_amount)
+            .expect("not enough offers");
         let (
             first_maker_multisig_pubkeys,
             this_maker_multisig_privkeys,
@@ -237,8 +237,8 @@ async fn send_coinswap(
                 ) = if is_taker_next_peer {
                     generate_my_multisig_and_hashlock_keys(config.tx_count)
                 } else {
-                    next_maker =
-                        choose_next_maker(&mut maker_offers_addresses).expect("not enough offers");
+                    next_maker = choose_next_maker(&mut maker_offers_addresses, config.send_amount)
+                        .expect("not enough offers");
                     //next_maker is only ever accessed when the next peer is a maker, not a taker
                     //i.e. if its ever used when is_taker_next_peer == true, then thats a bug
                     generate_maker_multisig_and_hashlock_keys(
@@ -558,10 +558,17 @@ async fn send_coinswap(
 
 fn choose_next_maker<'a>(
     maker_offers_addresses: &mut Vec<&'a OfferAddress>,
+    amount: u64,
 ) -> Option<&'a OfferAddress> {
-    let m = maker_offers_addresses.pop();
-    log::debug!("next maker = {:?}", m);
-    m
+    loop {
+        let m = maker_offers_addresses.pop()?;
+        if amount < m.offer.min_size || amount > m.offer.max_size {
+            log::debug!("amount out of range for maker = {:?}", m);
+            continue;
+        }
+        log::debug!("next maker = {:?}", m);
+        break Some(m);
+    }
 }
 
 async fn send_message(
