@@ -1215,6 +1215,8 @@ impl Wallet {
         spending_tx: &mut Transaction,
         inputs_info: &mut dyn Iterator<Item = UTXOSpendInfo>,
     ) {
+        log::debug!(target: "wallet", "unsigned spending tx = {:#?}", spending_tx);
+
         let secp = Secp256k1::new();
         let master_private_key = self
             .master_key
@@ -1225,6 +1227,7 @@ impl Wallet {
         for (ix, (mut input, input_info)) in
             spending_tx.input.iter_mut().zip(inputs_info).enumerate()
         {
+            log::debug!(target: "wallet", "signing with input_info = {:#?}", input_info);
             match input_info {
                 UTXOSpendInfo::SwapCoin {
                     multisig_redeemscript,
@@ -1324,6 +1327,7 @@ impl Wallet {
         //this is the solution used right now
 
         let change_addresses = self.get_next_internal_addresses(rpc, destinations.len() as u32)?;
+        log::debug!(target: "wallet", "change addrs = {:?}", change_addresses);
 
         self.lock_all_nonwallet_unspents(rpc)?;
         let mut output_values = Wallet::generate_amount_fractions(
@@ -1346,6 +1350,7 @@ impl Wallet {
         *output_values.first_mut().unwrap() =
             coinswap_amount - output_values.iter().skip(1).sum::<u64>();
         assert_eq!(output_values.iter().sum::<u64>(), coinswap_amount);
+        log::debug!(target: "wallet", "output values = {:?}", output_values);
 
         let mut spending_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();

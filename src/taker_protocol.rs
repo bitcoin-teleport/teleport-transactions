@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::iter::once;
 use std::time::Duration;
@@ -779,6 +779,7 @@ async fn wait_for_funding_tx_confirmation(
         "Waiting for funding transaction confirmations ({} conf required)",
         required_confirmations
     );
+    let mut txids_seen_once = HashSet::<Txid>::new();
     loop {
         for txid in funding_txids {
             if txid_tx_map.contains_key(txid) {
@@ -789,6 +790,17 @@ async fn wait_for_funding_tx_confirmation(
                 //if we lose connection to the node, just try again, no point returning an error
                 Err(_e) => continue,
             };
+            if !txids_seen_once.contains(txid) {
+                txids_seen_once.insert(*txid);
+                if gettx.info.confirmations == 0 {
+                    let mempool_tx = rpc.get_mempool_entry(txid)?;
+                    log::info!(
+                        "Seen in mempool: {} [{:.1} sat/vbyte]",
+                        txid,
+                        mempool_tx.fees.base.as_sat() as f32 / mempool_tx.vsize as f32
+                    );
+                }
+            }
             //TODO handle confirm<0
             if gettx.info.confirmations >= required_confirmations {
                 txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
