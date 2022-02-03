@@ -800,7 +800,10 @@ async fn wait_for_funding_tx_confirmation(
             if !txids_seen_once.contains(txid) {
                 txids_seen_once.insert(*txid);
                 if gettx.info.confirmations == 0 {
-                    let mempool_tx = rpc.get_mempool_entry(txid)?;
+                    let mempool_tx = match rpc.get_mempool_entry(txid) {
+                        Ok(m) => m,
+                        Err(_e) => continue,
+                    };
                     log::info!(
                         "Seen in mempool: {} [{:.1} sat/vbyte]",
                         txid,
