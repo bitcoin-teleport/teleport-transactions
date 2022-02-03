@@ -110,6 +110,53 @@ pub fn create_contract_redeemscript(
     hashvalue: Hash160,
     locktime: u16,
 ) -> Script {
+    //avoid the malleability from OP_IF attack, see:
+    //https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/000605.html
+    //the attack here is that OP_IF accepts anything nonzero as true, so someone
+    // could replace the argument with something much bigger, which would
+    // reduce the tx fee rate, the solution is to only use OP_IF after OP_EQUAL
+
+    //avoid the oversize preimage attack
+    //https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-May/000529.html
+    //one solution is adding `OP_SIZE 32 OP_EQUALVERIFY`
+    // but then you force the locktime case to waste 32 bytes of witness
+    //so we use this script which requires size zero for the locktime branch
+
+    //we also want the hashlock case to be locked with 1 OP_CSV
+    //which disables CPFP and therefore avoids transaction pinning
+    //see https://bitcoinops.org/en/topics/transaction-pinning/
+
+    /*
+    opcodes                  | stack after execution
+                             |
+                             | <sig> <preimage>
+    OP_SIZE                  | <sig> <preimage> <size>
+    OP_SWAP                  | <sig> <size> <preimage>
+    OP_HASH160               | <sig> <size> <hash>
+    H(X)                     | <sig> <size> <hash> H(X)
+    OP_EQUAL                 | <sig> <size> 1|0
+    OP_IF                    |
+        pub_hashlock         | <sig> <size> <pub>
+        32                   | <sig> <size> <pub> 32
+        1                    | <sig> <size> <pub> 32 1
+    OP_ELSE                  |
+        pub_timelock         | <sig> <size> <pub>
+        0                    | <sig> <size> <pub> 0
+        locktime             | <sig> <size> <pub> 0 <locktime>
+    OP_ENDIF                 |
+    OP_CHECKSEQUENCEVERIFY   | <sig> <size> <pub> (32|0) (1|<locktime>)
+    OP_DROP                  | <sig> <size> <pub> (32|0)
+    OP_ROT                   | <sig> <pub> (32|0) <size>
+    OP_EQUALVERIFY           | <sig> <pub>
+    OP_CHECKSIG              | true|false
+    */
+
+    //spent with witnesses:
+    //hashlock case:
+    //<hashlock_signature> <preimage len 32>
+    //timelock case:
+    //<timelock_signature> <empty_vector>
+
     Builder::new()
         .push_opcode(opcodes::all::OP_SIZE)
         .push_opcode(opcodes::all::OP_SWAP)
