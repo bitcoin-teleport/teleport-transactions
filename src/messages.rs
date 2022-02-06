@@ -93,7 +93,7 @@ pub struct HashPreimage {
     pub preimage: Preimage,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SwapCoinPrivateKey {
     pub multisig_redeemscript: Script,
     pub key: SecretKey,

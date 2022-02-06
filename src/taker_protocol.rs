@@ -50,6 +50,23 @@ use crate::watchtower_protocol::{
 pub const REFUND_LOCKTIME: u16 = 3; //in blocks
 pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
 
+//reconnect means when connecting to a maker again after having already gotten txes confirmed
+// as it would be a waste of miner fees to give up, the taker is coded to be very persistent
+//taker will first attempt to connect with a short delay between attempts
+// after that will attempt to connect with a longer delay between attempts
+//these figures imply that taker will attempt to connect for just over 48 hours
+// of course the user can ctrl+c before then if they give up themselves
+const RECONNECT_ATTEMPTS: u32 = 3200;
+const RECONNECT_SHORT_SLEEP_DELAY_MSEC: u64 = 10000;
+const RECONNECT_LONG_SLEEP_DELAY_MSEC: u64 = 1000 * 60;
+const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60; //after this many attempts, switch to sleeping longer
+
+//first connect means the first time you're ever connecting, without having gotten any txes
+// confirmed yet, so the taker will not be very persistent since there should be plenty of other
+// makers out there
+const FIRST_CONNECT_ATTEMPTS: u32 = 5;
+const FIRST_CONNECT_SLEEP_DELAY_MSEC: u64 = 1000;
+
 #[derive(Debug, Clone, Copy)]
 pub struct TakerConfig {
     pub send_amount: u64,
@@ -248,7 +265,7 @@ async fn send_coinswap(
                 };
                 log::info!("===> Sending ProofOfFunding to {}", current_maker.address);
                 let (maker_sign_sender_and_receiver_contracts, next_swap_contract_redeemscripts) =
-                    send_proof_of_funding_and_get_contract_txes(
+                    send_proof_of_funding_and_check_reply(
                         &mut socket_reader,
                         &mut socket_writer,
                         &current_maker,
@@ -456,74 +473,15 @@ async fn send_coinswap(
     }
     wallet.update_swapcoins_list().unwrap();
 
-    let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
-    for (index, maker_address) in active_maker_addresses.iter().enumerate() {
-        let is_taker_previous_peer = index == 0;
-        let is_taker_next_peer = (index as u16) == config.maker_count - 1;
-
-        let senders_multisig_redeemscripts = if is_taker_previous_peer {
-            get_multisig_redeemscripts_from_swapcoins(&outgoing_swapcoins)
-        } else {
-            get_multisig_redeemscripts_from_swapcoins(&watchonly_swapcoins[index - 1])
-        };
-
-        let receivers_multisig_redeemscripts = if is_taker_next_peer {
-            get_multisig_redeemscripts_from_swapcoins(&incoming_swapcoins)
-        } else {
-            get_multisig_redeemscripts_from_swapcoins(&watchonly_swapcoins[index])
-        };
-
-        let mut socket = TcpStream::connect(maker_address).await?;
-        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
-
-        log::info!("===> Sending HashPreimage to {}", maker_address);
-        let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
-            &mut socket_reader,
-            &mut socket_writer,
-            senders_multisig_redeemscripts,
-            receivers_multisig_redeemscripts,
-            preimage,
-        )
-        .await?;
-        log::info!("<=== Received PrivateKeyHandover from {}", maker_address);
-
-        let privkeys_reply = if is_taker_previous_peer {
-            outgoing_swapcoins
-                .iter()
-                .map(|outgoing_swapcoin| SwapCoinPrivateKey {
-                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    key: outgoing_swapcoin.my_privkey,
-                })
-                .collect::<Vec<SwapCoinPrivateKey>>()
-        } else {
-            assert!(outgoing_privkeys.is_some());
-            let reply = outgoing_privkeys.unwrap();
-            outgoing_privkeys = None;
-            reply
-        };
-        if is_taker_next_peer {
-            check_and_apply_maker_private_keys(
-                &mut incoming_swapcoins,
-                &maker_private_key_handover.swapcoin_private_keys,
-            )
-        } else {
-            let ret = check_and_apply_maker_private_keys(
-                &mut watchonly_swapcoins[index],
-                &maker_private_key_handover.swapcoin_private_keys,
-            );
-            outgoing_privkeys = Some(maker_private_key_handover.swapcoin_private_keys);
-            ret
-        }?;
-
-        log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
-        send_message(
-            &mut socket_writer,
-            TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
-                swapcoin_private_keys: privkeys_reply,
-            }),
-        )
-        .await?;
-    }
+    settle_all_coinswaps_send_hash_preimage_and_privkeys(
+        &config,
+        preimage,
+        &active_maker_addresses,
+        &outgoing_swapcoins,
+        &mut watchonly_swapcoins,
+        &mut incoming_swapcoins,
+    )
+    .await?;
 
     for (index, watchonly_swapcoin) in watchonly_swapcoins.iter().enumerate() {
         log::debug!(
@@ -673,9 +631,47 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
-    log::info!("===> Sending SignSendersContractTx to {}", maker_address);
+    let mut ii = 0;
+    loop {
+        ii += 1;
+        let ret = request_senders_contract_tx_signatures_once(
+            maker_address,
+            outgoing_swapcoins,
+            maker_multisig_nonces,
+            maker_hashlock_nonces,
+            locktime,
+        )
+        .await;
+        match ret {
+            Ok(sigs) => return Ok(sigs),
+            Err(e) => {
+                log::warn!(
+                    "Failed to request senders contract tx sigs from maker {}, \
+                    reattempting... error={:?}",
+                    maker_address,
+                    e
+                );
+                if ii <= FIRST_CONNECT_ATTEMPTS {
+                    sleep(Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_MSEC)).await;
+                    continue;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+async fn request_senders_contract_tx_signatures_once<S: SwapCoin>(
+    maker_address: &str,
+    outgoing_swapcoins: &[S],
+    maker_multisig_nonces: &[SecretKey],
+    maker_hashlock_nonces: &[SecretKey],
+    locktime: u16,
+) -> Result<Vec<Signature>, Error> {
     let mut socket = TcpStream::connect(maker_address).await?;
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+    log::info!("===> Sending SignSendersContractTx to {}", maker_address);
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::SignSendersContractTx(SignSendersContractTx {
@@ -725,6 +721,47 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
 }
 
 async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
+    maker_address: &str,
+    incoming_swapcoins: &[S],
+    receivers_contract_txes: &[Transaction],
+) -> Result<Vec<Signature>, Error> {
+    let mut ii = 0;
+    loop {
+        ii += 1;
+        let ret = request_receivers_contract_tx_signatures_once(
+            maker_address,
+            incoming_swapcoins,
+            receivers_contract_txes,
+        )
+        .await;
+        match ret {
+            Ok(sigs) => return Ok(sigs),
+            Err(e) => {
+                log::warn!(
+                    "Failed to request receivers contract tx sigs from maker {}, \
+                    reattempting... error={:?}",
+                    maker_address,
+                    e
+                );
+                if ii <= RECONNECT_ATTEMPTS {
+                    sleep(Duration::from_millis(
+                        if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
+                            RECONNECT_SHORT_SLEEP_DELAY_MSEC
+                        } else {
+                            RECONNECT_LONG_SLEEP_DELAY_MSEC
+                        },
+                    ))
+                    .await;
+                    continue;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+async fn request_receivers_contract_tx_signatures_once<S: SwapCoin>(
     maker_address: &str,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
@@ -899,7 +936,7 @@ fn get_swapcoin_multisig_contract_redeemscripts_txes<S: SwapCoin>(
     )
 }
 
-async fn send_proof_of_funding_and_get_contract_txes(
+async fn send_proof_of_funding_and_check_reply(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
     this_maker: &OfferAddress,
@@ -1237,19 +1274,151 @@ fn get_multisig_redeemscripts_from_swapcoins<S: SwapCoin>(swapcoins: &[S]) -> Ve
         .collect::<Vec<Script>>()
 }
 
+async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
+    config: &TakerConfig,
+    preimage: Preimage,
+    active_maker_addresses: &Vec<String>,
+    outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
+    watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
+    incoming_swapcoins: &mut Vec<IncomingSwapCoin>,
+) -> Result<(), Error> {
+    let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
+    for (index, maker_address) in active_maker_addresses.iter().enumerate() {
+        let is_taker_previous_peer = index == 0;
+        let is_taker_next_peer = (index as u16) == config.maker_count - 1;
+
+        let senders_multisig_redeemscripts = if is_taker_previous_peer {
+            get_multisig_redeemscripts_from_swapcoins(&outgoing_swapcoins)
+        } else {
+            get_multisig_redeemscripts_from_swapcoins(&watchonly_swapcoins[index - 1])
+        };
+        let receivers_multisig_redeemscripts = if is_taker_next_peer {
+            get_multisig_redeemscripts_from_swapcoins(&incoming_swapcoins)
+        } else {
+            get_multisig_redeemscripts_from_swapcoins(&watchonly_swapcoins[index])
+        };
+
+        let mut ii = 0;
+        loop {
+            ii += 1;
+            let ret = settle_one_coinswap(
+                maker_address,
+                index,
+                is_taker_previous_peer,
+                is_taker_next_peer,
+                &mut outgoing_privkeys,
+                outgoing_swapcoins,
+                watchonly_swapcoins,
+                incoming_swapcoins,
+                &senders_multisig_redeemscripts,
+                &receivers_multisig_redeemscripts,
+                preimage,
+            )
+            .await;
+            if let Err(e) = ret {
+                log::warn!(
+                    "Failed to connect to maker {} to settle coinswap, reattempting... error={:?}",
+                    maker_address,
+                    e
+                );
+                if ii <= RECONNECT_ATTEMPTS {
+                    sleep(Duration::from_millis(
+                        if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
+                            RECONNECT_SHORT_SLEEP_DELAY_MSEC
+                        } else {
+                            RECONNECT_LONG_SLEEP_DELAY_MSEC
+                        },
+                    ))
+                    .await;
+                    continue;
+                } else {
+                    return Err(e);
+                }
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
+async fn settle_one_coinswap(
+    maker_address: &String,
+    index: usize,
+    is_taker_previous_peer: bool,
+    is_taker_next_peer: bool,
+    outgoing_privkeys: &mut Option<Vec<SwapCoinPrivateKey>>,
+    outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
+    watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
+    incoming_swapcoins: &mut Vec<IncomingSwapCoin>,
+    senders_multisig_redeemscripts: &Vec<Script>,
+    receivers_multisig_redeemscripts: &Vec<Script>,
+    preimage: Preimage,
+) -> Result<(), Error> {
+    let mut socket = TcpStream::connect(maker_address).await?;
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+
+    log::info!("===> Sending HashPreimage to {}", maker_address);
+    let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
+        &mut socket_reader,
+        &mut socket_writer,
+        senders_multisig_redeemscripts,
+        receivers_multisig_redeemscripts,
+        preimage,
+    )
+    .await?;
+    log::info!("<=== Received PrivateKeyHandover from {}", maker_address);
+
+    let privkeys_reply = if is_taker_previous_peer {
+        outgoing_swapcoins
+            .iter()
+            .map(|outgoing_swapcoin| SwapCoinPrivateKey {
+                multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                key: outgoing_swapcoin.my_privkey,
+            })
+            .collect::<Vec<SwapCoinPrivateKey>>()
+    } else {
+        assert!(outgoing_privkeys.is_some());
+        let reply = outgoing_privkeys.as_ref().unwrap().to_vec();
+        *outgoing_privkeys = None;
+        reply
+    };
+    if is_taker_next_peer {
+        check_and_apply_maker_private_keys(
+            incoming_swapcoins,
+            &maker_private_key_handover.swapcoin_private_keys,
+        )
+    } else {
+        let ret = check_and_apply_maker_private_keys(
+            &mut watchonly_swapcoins[index],
+            &maker_private_key_handover.swapcoin_private_keys,
+        );
+        *outgoing_privkeys = Some(maker_private_key_handover.swapcoin_private_keys);
+        ret
+    }?;
+    log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
+    send_message(
+        &mut socket_writer,
+        TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
+            swapcoin_private_keys: privkeys_reply,
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
 async fn send_hash_preimage_and_get_private_keys(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
-    senders_multisig_redeemscripts: Vec<Script>,
-    receivers_multisig_redeemscripts: Vec<Script>,
+    senders_multisig_redeemscripts: &Vec<Script>,
+    receivers_multisig_redeemscripts: &Vec<Script>,
     preimage: Preimage,
 ) -> Result<PrivateKeyHandover, Error> {
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
     send_message(
         socket_writer,
         TakerToMakerMessage::HashPreimage(HashPreimage {
-            senders_multisig_redeemscripts,
-            receivers_multisig_redeemscripts,
+            senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
+            receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
             preimage,
         }),
     )
