@@ -505,7 +505,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     let mut ii = 0;
     loop {
         ii += 1;
-        let ret = request_senders_contract_tx_signatures_once(
+        let ret = request_senders_contract_tx_signatures_attempt_once(
             maker_address,
             outgoing_swapcoins,
             maker_multisig_nonces,
@@ -533,7 +533,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     }
 }
 
-async fn request_senders_contract_tx_signatures_once<S: SwapCoin>(
+async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
     maker_address: &str,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
@@ -599,7 +599,7 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
     let mut ii = 0;
     loop {
         ii += 1;
-        let ret = request_receivers_contract_tx_signatures_once(
+        let ret = request_receivers_contract_tx_signatures_attempt_once(
             maker_address,
             incoming_swapcoins,
             receivers_contract_txes,
@@ -632,7 +632,7 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
     }
 }
 
-async fn request_receivers_contract_tx_signatures_once<S: SwapCoin>(
+async fn request_receivers_contract_tx_signatures_attempt_once<S: SwapCoin>(
     maker_address: &str,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
@@ -828,7 +828,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
     let mut ii = 0;
     loop {
         ii += 1;
-        let ret = exchange_signatures_and_find_next_maker_once(
+        let ret = exchange_signatures_and_find_next_maker_attempt_once(
             rpc,
             config,
             maker_offers_addresses,
@@ -876,7 +876,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
     }
 }
 
-async fn exchange_signatures_and_find_next_maker_once<'a>(
+async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     rpc: &Client,
     config: &TakerConfig,
     maker_offers_addresses: &mut Vec<&'a OfferAddress>,
