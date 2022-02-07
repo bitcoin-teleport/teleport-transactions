@@ -225,7 +225,7 @@ async fn send_coinswap(
             get_swapcoin_multisig_contract_redeemscripts_txes(watchonly_swapcoins.last().unwrap())
         };
 
-        let current_maker = next_maker;
+        let this_maker = next_maker;
         let (
             next_peer_multisig_pubkeys,
             next_peer_multisig_keys_or_nonces,
@@ -237,7 +237,7 @@ async fn send_coinswap(
             rpc,
             &config,
             &mut maker_offers_addresses,
-            &current_maker,
+            &this_maker,
             previous_maker,
             is_taker_previous_peer,
             is_taker_next_peer,
@@ -255,7 +255,7 @@ async fn send_coinswap(
         )
         .await?;
         next_maker = found_next_maker;
-        active_maker_addresses.push(current_maker.address.clone());
+        active_maker_addresses.push(this_maker.address.clone());
 
         let wait_for_confirm_result = wait_for_funding_tx_confirmation(
             rpc,
@@ -317,7 +317,7 @@ async fn send_coinswap(
         }
         this_maker_multisig_privkeys = next_peer_multisig_keys_or_nonces;
         this_maker_hashlock_privkeys = next_peer_hashlock_keys_or_nonces;
-        previous_maker = Some(current_maker);
+        previous_maker = Some(this_maker);
     }
 
     let last_maker = previous_maker.unwrap();
