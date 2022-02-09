@@ -1,6 +1,5 @@
-use tokio::io::BufReader;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::prelude::*;
 
 use crate::error::Error;
 use crate::watchtower_protocol::{

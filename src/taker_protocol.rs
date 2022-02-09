@@ -3,10 +3,9 @@ use std::io::ErrorKind;
 use std::iter::once;
 use std::time::Duration;
 
-use tokio::io::BufReader;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
-use tokio::prelude::*;
 use tokio::time::sleep;
 
 use bitcoin::consensus::encode::deserialize;
@@ -406,7 +405,7 @@ async fn send_message(
     message: TakerToMakerMessage,
 ) -> Result<(), Error> {
     log::debug!("==> {:#?}", message);
-    let mut result_bytes = serde_json::to_vec(&message).map_err(|e| io::Error::from(e))?;
+    let mut result_bytes = serde_json::to_vec(&message).map_err(|e| std::io::Error::from(e))?;
     result_bytes.push(b'\n');
     socket_writer.write_all(&result_bytes).await?;
     Ok(())
@@ -416,7 +415,7 @@ async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTak
     let mut line = String::new();
     let n = reader.read_line(&mut line).await?;
     if n == 0 {
-        return Err(Error::Network(Box::new(io::Error::new(
+        return Err(Error::Network(Box::new(std::io::Error::new(
             ErrorKind::ConnectionReset,
             "EOF",
         ))));

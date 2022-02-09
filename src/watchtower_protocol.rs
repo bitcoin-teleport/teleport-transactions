@@ -4,10 +4,9 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tokio::io::BufReader;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpListener;
-use tokio::prelude::*;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -265,7 +264,7 @@ async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &WatchtowerToMakerMessage,
 ) -> Result<(), Error> {
-    let mut message_bytes = serde_json::to_vec(message).map_err(|e| io::Error::from(e))?;
+    let mut message_bytes = serde_json::to_vec(message).map_err(|e| std::io::Error::from(e))?;
     message_bytes.push(b'\n');
     socket_writer.write_all(&message_bytes).await?;
     Ok(())
