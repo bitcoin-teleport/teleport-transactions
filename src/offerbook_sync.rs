@@ -27,13 +27,17 @@ pub struct OfferAndAddress {
     pub address: MakerAddress,
 }
 
-const MAKER_HOSTS: [&str; 5] = [
+const REGTEST_MAKER_HOSTS: &'static [&'static str] = &[
     "localhost:6102",
     "localhost:16102",
     "localhost:26102",
     "localhost:36102",
     "localhost:46102",
 ];
+
+pub fn get_regtest_maker_hosts() -> Vec<&'static str> {
+    Vec::from(REGTEST_MAKER_HOSTS)
+}
 
 impl MakerAddress {
     pub fn get_tcpstream_address(&self) -> String {
@@ -113,17 +117,16 @@ async fn download_maker_offer(address: MakerAddress) -> Option<OfferAndAddress> 
     }
 }
 
-pub async fn sync_offerbook() -> Vec<OfferAndAddress> {
+pub async fn sync_offerbook(maker_hostnames: &Vec<&str>) -> Vec<OfferAndAddress> {
     let (offers_writer_m, mut offers_reader) = mpsc::channel::<Option<OfferAndAddress>>(100);
     //unbounded_channel makes more sense here, but results in a compile
     //error i cant figure out
 
-    for host in &MAKER_HOSTS {
+    for host in maker_hostnames {
         let offers_writer = offers_writer_m.clone();
+        let address = host.to_string();
         tokio::spawn(async move {
-            let addr = MakerAddress::Clearnet {
-                address: host.to_string(),
-            };
+            let addr = MakerAddress::Clearnet { address };
             if let Err(_e) = offers_writer.send(download_maker_offer(addr).await).await {
                 panic!("mpsc failed");
             }
@@ -131,7 +134,7 @@ pub async fn sync_offerbook() -> Vec<OfferAndAddress> {
     }
 
     let mut result = Vec::<OfferAndAddress>::new();
-    for _ in 0..MAKER_HOSTS.len() {
+    for _ in 0..maker_hostnames.len() {
         if let Some(offer_addr) = offers_reader.recv().await.unwrap() {
             result.push(offer_addr);
         }

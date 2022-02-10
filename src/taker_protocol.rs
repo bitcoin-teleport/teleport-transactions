@@ -39,7 +39,9 @@ use crate::messages::{
     SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage, PREIMAGE_LEN,
 };
 
-use crate::offerbook_sync::{sync_offerbook, MakerAddress, OfferAndAddress};
+use crate::offerbook_sync::{
+    get_regtest_maker_hosts, sync_offerbook, MakerAddress, OfferAndAddress,
+};
 use crate::wallet_sync::{
     generate_keypair, import_watchonly_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
 };
@@ -91,7 +93,7 @@ pub async fn start_taker(rpc: &Client, wallet: &mut Wallet, config: TakerConfig)
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) -> Result<(), Error> {
-    let offers_addresses = sync_offerbook().await;
+    let offers_addresses = sync_offerbook(&get_regtest_maker_hosts()).await;
     log::info!("<=== Got Offers");
     log::debug!("Offers : {:#?}", offers_addresses);
     send_coinswap(rpc, wallet, config, &offers_addresses).await?;
