@@ -8,6 +8,8 @@ use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::time::sleep;
 
+use tokio_socks::tcp::Socks5Stream;
+
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
@@ -36,7 +38,7 @@ use crate::messages::{
     SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage, PREIMAGE_LEN,
 };
 
-use crate::offerbook_sync::{sync_offerbook, OfferAddress};
+use crate::offerbook_sync::{sync_offerbook, MakerAddress, OfferAndAddress};
 use crate::wallet_sync::{
     generate_keypair, import_watchonly_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
 };
@@ -97,7 +99,7 @@ async fn send_coinswap(
     rpc: &Client,
     wallet: &mut Wallet,
     config: TakerConfig,
-    all_maker_offers_addresses: &Vec<OfferAddress>,
+    all_maker_offers_addresses: &Vec<OfferAndAddress>,
 ) -> Result<(), Error> {
     let mut preimage = [0u8; PREIMAGE_LEN];
     OsRng.fill_bytes(&mut preimage);
@@ -107,7 +109,7 @@ async fn send_coinswap(
 
     let mut maker_offers_addresses = all_maker_offers_addresses
         .iter()
-        .collect::<Vec<&OfferAddress>>();
+        .collect::<Vec<&OfferAndAddress>>();
 
     let (
         first_maker,
@@ -199,9 +201,9 @@ async fn send_coinswap(
     //unwrap the option without checking for Option::None because we passed no contract txes
     //to watch and therefore they cant be broadcast
 
-    let mut active_maker_addresses = Vec::<String>::new();
+    let mut active_maker_addresses = Vec::<&MakerAddress>::new();
     let mut next_maker = first_maker;
-    let mut previous_maker: Option<&OfferAddress> = None;
+    let mut previous_maker: Option<&OfferAndAddress> = None;
 
     let mut watchonly_swapcoins = Vec::<Vec<WatchOnlySwapCoin>>::new();
     let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
@@ -254,7 +256,7 @@ async fn send_coinswap(
         )
         .await?;
         next_maker = found_next_maker;
-        active_maker_addresses.push(this_maker.address.clone());
+        active_maker_addresses.push(&this_maker.address);
 
         let wait_for_confirm_result = wait_for_funding_tx_confirmation(
             rpc,
@@ -386,9 +388,9 @@ async fn send_coinswap(
 }
 
 fn choose_next_maker<'a>(
-    maker_offers_addresses: &mut Vec<&'a OfferAddress>,
+    maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
     amount: u64,
-) -> Option<&'a OfferAddress> {
+) -> Option<&'a OfferAndAddress> {
     loop {
         let m = maker_offers_addresses.pop()?;
         if amount < m.offer.min_size || amount > m.offer.max_size {
@@ -428,9 +430,16 @@ async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTak
     Ok(message)
 }
 
-async fn handshake_maker(
-    socket: &mut TcpStream,
-) -> Result<(BufReader<ReadHalf<'_>>, WriteHalf<'_>), Error> {
+async fn handshake_maker<'a>(
+    socket: &'a mut TcpStream,
+    maker_address: &MakerAddress,
+) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), Error> {
+    let socket = match maker_address {
+        MakerAddress::Clearnet { address: _ } => socket,
+        MakerAddress::Tor { address } => Socks5Stream::connect_with_socket(socket, address.clone())
+            .await?
+            .into_inner(),
+    };
     let (reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(reader);
     send_message(
@@ -495,7 +504,7 @@ fn generate_my_multisig_and_hashlock_keys(
 }
 
 async fn request_senders_contract_tx_signatures<S: SwapCoin>(
-    maker_address: &str,
+    maker_address: &MakerAddress,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
@@ -533,14 +542,15 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
 }
 
 async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
-    maker_address: &str,
+    maker_address: &MakerAddress,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
 ) -> Result<Vec<Signature>, Error> {
-    let mut socket = TcpStream::connect(maker_address).await?;
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) =
+        handshake_maker(&mut socket, maker_address).await?;
     log::info!("===> Sending SignSendersContractTx to {}", maker_address);
     send_message(
         &mut socket_writer,
@@ -591,7 +601,7 @@ async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
 }
 
 async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
-    maker_address: &str,
+    maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
 ) -> Result<Vec<Signature>, Error> {
@@ -632,12 +642,13 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
 }
 
 async fn request_receivers_contract_tx_signatures_attempt_once<S: SwapCoin>(
-    maker_address: &str,
+    maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
 ) -> Result<Vec<Signature>, Error> {
-    let mut socket = TcpStream::connect(maker_address).await?;
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) =
+        handshake_maker(&mut socket, maker_address).await?;
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::SignReceiversContractTx(SignReceiversContractTx {
@@ -797,9 +808,9 @@ fn get_swapcoin_multisig_contract_redeemscripts_txes<S: SwapCoin>(
 async fn exchange_signatures_and_find_next_maker<'a>(
     rpc: &Client,
     config: &TakerConfig,
-    maker_offers_addresses: &mut Vec<&'a OfferAddress>,
-    this_maker: &'a OfferAddress,
-    previous_maker: Option<&'a OfferAddress>,
+    maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
+    this_maker: &'a OfferAndAddress,
+    previous_maker: Option<&'a OfferAndAddress>,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
     funding_txes: &[Transaction],
@@ -820,7 +831,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
         Vec<SecretKey>,
         SignSendersAndReceiversContractTxes,
         Vec<Script>,
-        &'a OfferAddress,
+        &'a OfferAndAddress,
     ),
     Error,
 > {
@@ -878,9 +889,9 @@ async fn exchange_signatures_and_find_next_maker<'a>(
 async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     rpc: &Client,
     config: &TakerConfig,
-    maker_offers_addresses: &mut Vec<&'a OfferAddress>,
-    this_maker: &'a OfferAddress,
-    previous_maker: Option<&'a OfferAddress>,
+    maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
+    this_maker: &'a OfferAndAddress,
+    previous_maker: Option<&'a OfferAndAddress>,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
     funding_txes: &[Transaction],
@@ -901,15 +912,16 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
         Vec<SecretKey>,
         SignSendersAndReceiversContractTxes,
         Vec<Script>,
-        &'a OfferAddress,
+        &'a OfferAndAddress,
     ),
     Error,
 > {
     //return next_peer_multisig_pubkeys, next_peer_multisig_keys_or_nonces,
     //    next_peer_hashlock_keys_or_nonces, (), next_swap_contract_redeemscripts, found_next_maker
 
-    let mut socket = TcpStream::connect(this_maker.address.clone()).await?;
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+    let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) =
+        handshake_maker(&mut socket, &this_maker.address).await?;
     let mut next_maker = this_maker;
     let (
         next_peer_multisig_pubkeys,
@@ -1059,7 +1071,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
 async fn send_proof_of_funding_and_check_reply(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
-    this_maker: &OfferAddress,
+    this_maker: &OfferAndAddress,
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
     this_maker_multisig_redeemscripts: &[Script],
@@ -1409,7 +1421,7 @@ fn check_and_apply_maker_private_keys<S: SwapCoin>(
 async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
     config: &TakerConfig,
     preimage: Preimage,
-    active_maker_addresses: &Vec<String>,
+    active_maker_addresses: &Vec<&MakerAddress>,
     outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
     incoming_swapcoins: &mut Vec<IncomingSwapCoin>,
@@ -1474,7 +1486,7 @@ async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
 }
 
 async fn settle_one_coinswap(
-    maker_address: &String,
+    maker_address: &MakerAddress,
     index: usize,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
@@ -1486,8 +1498,9 @@ async fn settle_one_coinswap(
     receivers_multisig_redeemscripts: &Vec<Script>,
     preimage: Preimage,
 ) -> Result<(), Error> {
-    let mut socket = TcpStream::connect(maker_address).await?;
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) =
+        handshake_maker(&mut socket, maker_address).await?;
 
     log::info!("===> Sending HashPreimage to {}", maker_address);
     let maker_private_key_handover = send_hash_preimage_and_get_private_keys(

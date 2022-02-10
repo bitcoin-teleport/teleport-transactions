@@ -246,6 +246,9 @@ async fn run(
                             Error::Rpc(e) => {
                                 server_loop_comms_tx.send(Error::Rpc(e)).await.unwrap()
                             }
+                            Error::Socks(e) => {
+                                server_loop_comms_tx.send(Error::Socks(e)).await.unwrap()
+                            }
                         };
                         break;
                     }
