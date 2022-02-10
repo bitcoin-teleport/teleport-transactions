@@ -57,9 +57,9 @@ pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
 // makers out there
 //but also it should allow for flaky connections, otherwise you exclude raspberry pi nodes running
 // in people's closets, which are very important for decentralization
-const FIRST_CONNECT_ATTEMPTS: u32 = 5;
-const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
-const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 20;
+pub const FIRST_CONNECT_ATTEMPTS: u32 = 5;
+pub const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+pub const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 20;
 
 //reconnect means when connecting to a maker again after having already gotten txes confirmed
 // as it would be a waste of miner fees to give up, the taker is coded to be very persistent
@@ -405,7 +405,7 @@ fn choose_next_maker<'a>(
     }
 }
 
-async fn send_message(
+pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: TakerToMakerMessage,
 ) -> Result<(), Error> {
@@ -416,7 +416,9 @@ async fn send_message(
     Ok(())
 }
 
-async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTakerMessage, Error> {
+pub async fn read_message(
+    reader: &mut BufReader<ReadHalf<'_>>,
+) -> Result<MakerToTakerMessage, Error> {
     let mut line = String::new();
     let n = reader.read_line(&mut line).await?;
     if n == 0 {
@@ -433,7 +435,7 @@ async fn read_message(reader: &mut BufReader<ReadHalf<'_>>) -> Result<MakerToTak
     Ok(message)
 }
 
-async fn handshake_maker<'a>(
+pub async fn handshake_maker<'a>(
     socket: &'a mut TcpStream,
     maker_address: &MakerAddress,
 ) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), Error> {

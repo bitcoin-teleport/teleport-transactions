@@ -1,10 +1,17 @@
 use std::fmt;
+use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::select;
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
-use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerHello, TakerToMakerMessage};
+use crate::error::Error;
+use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage};
+use crate::taker_protocol::{
+    handshake_maker, read_message, send_message, FIRST_CONNECT_ATTEMPTS,
+    FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
+};
 
 const TOR_ADDR: &str = "127.0.0.1:9150";
 
@@ -46,76 +53,64 @@ impl fmt::Display for MakerAddress {
     }
 }
 
-fn parse_message(line: &str) -> Option<MakerToTakerMessage> {
-    let message: MakerToTakerMessage = match serde_json::from_str(line) {
-        Ok(r) => r,
-        Err(_e) => return None,
-    };
-    Some(message)
-}
+async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, Error> {
+    log::debug!(target: "offerbook", "Connecting to {}", addr);
+    let mut socket = TcpStream::connect(addr.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket, addr).await?;
 
-async fn download_maker_offer(host: &str) -> Option<OfferAndAddress> {
-    //TODO add timeouts to deal with indefinite hangs
-    let mut socket = match TcpStream::connect(host).await {
-        Ok(s) => s,
-        Err(_e) => {
-            log::trace!(target: "offer_book", "failed to connect to: {}", host);
-            return None;
-        }
-    };
+    send_message(
+        &mut socket_writer,
+        TakerToMakerMessage::GiveOffer(GiveOffer),
+    )
+    .await?;
 
-    let (socket_reader, mut socket_writer) = socket.split();
-    let mut socket_reader = BufReader::new(socket_reader);
-
-    let mut message_packet = serde_json::to_vec(&TakerToMakerMessage::TakerHello(TakerHello {
-        protocol_version_min: 0,
-        protocol_version_max: 0,
-    }))
-    .unwrap();
-    message_packet.push(b'\n');
-    message_packet
-        .append(&mut serde_json::to_vec(&TakerToMakerMessage::GiveOffer(GiveOffer)).unwrap());
-    message_packet.push(b'\n');
-    //TODO error handling here
-    socket_writer.write_all(&message_packet).await.unwrap();
-
-    let mut line1 = String::new();
-    match socket_reader.read_line(&mut line1).await {
-        Ok(0) | Err(_) => {
-            log::trace!(target: "offer_book", "failed to read line");
-            return None;
-        }
-        Ok(_n) => (),
-    };
-    let _makerhello = if let MakerToTakerMessage::MakerHello(m) = parse_message(&line1)? {
-        m
-    } else {
-        log::trace!(target: "offer_book", "wrong protocol message");
-        return None;
-    };
-    log::trace!(target: "offer_book", "maker hello = {:?}", _makerhello);
-
-    let mut line2 = String::new();
-    match socket_reader.read_line(&mut line2).await {
-        Ok(0) | Err(_) => {
-            log::trace!(target: "oofer_book", "failed to read line2");
-            return None;
-        }
-        Ok(_n) => (),
-    };
-    let offer = if let MakerToTakerMessage::Offer(o) = parse_message(&line2)? {
+    let offer = if let MakerToTakerMessage::Offer(o) = read_message(&mut socket_reader).await? {
         o
     } else {
-        log::trace!(target: "offer_book", "wrong protocol message2");
-        return None;
+        return Err(Error::Protocol("expected method offer"));
     };
 
-    Some(OfferAndAddress {
-        offer,
-        address: MakerAddress::Clearnet {
-            address: String::from(host),
-        },
-    })
+    log::debug!(target: "offerbook", "Obtained offer from {}", addr);
+    Ok(offer)
+}
+
+async fn download_maker_offer(address: MakerAddress) -> Option<OfferAndAddress> {
+    let mut ii = 0;
+    loop {
+        ii += 1;
+        select! {
+            ret = download_maker_offer_attempt_once(&address) => {
+                match ret {
+                    Ok(offer) => return Some(OfferAndAddress { offer, address }),
+                    Err(e) => {
+                        log::debug!(target: "offerbook",
+                            "Failed to request offer from maker {}, \
+                            reattempting... error={:?}",
+                            address,
+                            e
+                        );
+                        if ii <= FIRST_CONNECT_ATTEMPTS {
+                            sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC)).await;
+                            continue;
+                        } else {
+                            return None;
+                        }
+                    }
+                }
+            },
+            _ = sleep(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)) => {
+                log::debug!(target: "offerbook",
+                    "Timeout for request offer from maker {}, reattempting...",
+                    address
+                );
+                if ii <= FIRST_CONNECT_ATTEMPTS {
+                    continue;
+                } else {
+                    return None;
+                }
+            },
+        }
+    }
 }
 
 pub async fn sync_offerbook() -> Vec<OfferAndAddress> {
@@ -126,7 +121,10 @@ pub async fn sync_offerbook() -> Vec<OfferAndAddress> {
     for host in &MAKER_HOSTS {
         let offers_writer = offers_writer_m.clone();
         tokio::spawn(async move {
-            if let Err(_e) = offers_writer.send(download_maker_offer(host).await).await {
+            let addr = MakerAddress::Clearnet {
+                address: host.to_string(),
+            };
+            if let Err(_e) = offers_writer.send(download_maker_offer(addr).await).await {
                 panic!("mpsc failed");
             }
         });
