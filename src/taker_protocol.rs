@@ -58,8 +58,8 @@ pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
 //but also it should allow for flaky connections, otherwise you exclude raspberry pi nodes running
 // in people's closets, which are very important for decentralization
 const FIRST_CONNECT_ATTEMPTS: u32 = 5;
-const FIRST_CONNECT_SLEEP_DELAY_MSEC: u64 = 1000;
-const FIRST_CONNECT_ATTEMPT_TIMEOUT: u64 = 20000;
+const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 20;
 
 //reconnect means when connecting to a maker again after having already gotten txes confirmed
 // as it would be a waste of miner fees to give up, the taker is coded to be very persistent
@@ -68,10 +68,10 @@ const FIRST_CONNECT_ATTEMPT_TIMEOUT: u64 = 20000;
 //these figures imply that taker will attempt to connect for just over 48 hours
 // of course the user can ctrl+c before then if they give up themselves
 const RECONNECT_ATTEMPTS: u32 = 3200;
-const RECONNECT_SHORT_SLEEP_DELAY_MSEC: u64 = 10000;
-const RECONNECT_LONG_SLEEP_DELAY_MSEC: u64 = 1000 * 60;
+const RECONNECT_SHORT_SLEEP_DELAY_SEC: u64 = 10;
+const RECONNECT_LONG_SLEEP_DELAY_SEC: u64 = 60;
 const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60; //after this many attempts, switch to sleeping longer
-const RECONNECT_ATTEMPT_TIMEOUT: u64 = 1000 * 60 * 5;
+const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60 * 5;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TakerConfig {
@@ -534,7 +534,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
                             e
                         );
                         if ii <= FIRST_CONNECT_ATTEMPTS {
-                            sleep(Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_MSEC)).await;
+                            sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC)).await;
                             continue;
                         } else {
                             return Err(e);
@@ -542,7 +542,7 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
                     }
                 }
             },
-            _ = sleep(Duration::from_millis(FIRST_CONNECT_ATTEMPT_TIMEOUT)) => {
+            _ = sleep(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)) => {
                 log::warn!(
                     "Timeout for request senders contract tx sig from maker {}, reattempting...",
                     maker_address
@@ -642,11 +642,11 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
                             e
                         );
                         if ii <= RECONNECT_ATTEMPTS {
-                            sleep(Duration::from_millis(
+                            sleep(Duration::from_secs(
                                 if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                    RECONNECT_SHORT_SLEEP_DELAY_MSEC
+                                    RECONNECT_SHORT_SLEEP_DELAY_SEC
                                 } else {
-                                    RECONNECT_LONG_SLEEP_DELAY_MSEC
+                                    RECONNECT_LONG_SLEEP_DELAY_SEC
                                 },
                             ))
                             .await;
@@ -657,7 +657,7 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
                     }
                 }
             },
-            _ = sleep(Duration::from_millis(RECONNECT_ATTEMPT_TIMEOUT)) => {
+            _ = sleep(Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC)) => {
                 log::warn!(
                     "Timeout for request receivers contract tx sig from maker {}, reattempting...",
                     maker_address
@@ -902,11 +902,11 @@ async fn exchange_signatures_and_find_next_maker<'a>(
                             e
                         );
                         if ii <= RECONNECT_ATTEMPTS {
-                            sleep(Duration::from_millis(
+                            sleep(Duration::from_secs(
                                 if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                    RECONNECT_SHORT_SLEEP_DELAY_MSEC
+                                    RECONNECT_SHORT_SLEEP_DELAY_SEC
                                 } else {
-                                    RECONNECT_LONG_SLEEP_DELAY_MSEC
+                                    RECONNECT_LONG_SLEEP_DELAY_SEC
                                 },
                             ))
                             .await;
@@ -917,7 +917,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
                     }
                 }
             },
-            _ = sleep(Duration::from_millis(RECONNECT_ATTEMPT_TIMEOUT)) => {
+            _ = sleep(Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC)) => {
                 log::warn!(
                     "Timeout for exchange signatures with maker {}, reattempting...",
                     this_maker.address
@@ -1515,11 +1515,11 @@ async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
                             e
                         );
                         if ii <= RECONNECT_ATTEMPTS {
-                            sleep(Duration::from_millis(
+                            sleep(Duration::from_secs(
                                 if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                    RECONNECT_SHORT_SLEEP_DELAY_MSEC
+                                    RECONNECT_SHORT_SLEEP_DELAY_SEC
                                 } else {
-                                    RECONNECT_LONG_SLEEP_DELAY_MSEC
+                                    RECONNECT_LONG_SLEEP_DELAY_SEC
                                 },
                             ))
                             .await;
@@ -1530,7 +1530,7 @@ async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
                     }
                     break;
                 },
-                _ = sleep(Duration::from_millis(RECONNECT_ATTEMPT_TIMEOUT)) => {
+                _ = sleep(Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC)) => {
                     log::warn!(
                         "Timeout for settling coinswap with maker {}, reattempting...",
                         maker_address
