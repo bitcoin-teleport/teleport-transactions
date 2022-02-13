@@ -22,7 +22,7 @@ use tokio::time::sleep;
 
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::{Amount, OutPoint, PublicKey, Transaction, TxOut, Txid};
+use bitcoin::{Amount, Network, OutPoint, PublicKey, Transaction, TxOut, Txid};
 use bitcoincore_rpc::{Client, RpcApi};
 
 use itertools::izip;
@@ -112,10 +112,12 @@ async fn run(
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
 
-    log::info!("Adding my address at the directory servers. . .");
-    post_maker_host_to_directory_servers(NETWORK, MAKER_ONION_ADDR)
-        .await
-        .unwrap();
+    if NETWORK != Network::Regtest {
+        log::info!("Adding my address at the directory servers. . .");
+        post_maker_host_to_directory_servers(NETWORK, MAKER_ONION_ADDR)
+            .await
+            .unwrap();
+    }
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)).await?;
     log::info!("Listening On Port {}", config.port);
@@ -164,7 +166,8 @@ async fn run(
                 let directory_servers_refresh_interval = Duration::from_secs(
                     config.directory_servers_refresh_interval
                 );
-                if Instant::now().saturating_duration_since(last_directory_servers_refresh)
+                if NETWORK != Network::Regtest
+                        && Instant::now().saturating_duration_since(last_directory_servers_refresh)
                         > directory_servers_refresh_interval {
                     last_directory_servers_refresh = Instant::now();
                     let result_expiry_time = post_maker_host_to_directory_servers(
