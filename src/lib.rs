@@ -28,6 +28,7 @@ use maker_protocol::MakerBehavior;
 pub mod taker_protocol;
 use taker_protocol::TakerConfig;
 
+pub mod directory_servers;
 pub mod error;
 pub mod messages;
 pub mod offerbook_sync;
@@ -385,6 +386,7 @@ pub fn run_maker(
         port,
         rpc_ping_interval: 60,
         watchtower_ping_interval: 300,
+        directory_servers_refresh_interval: 60 * 60 * 12, //12 hours
         maker_behavior,
         kill_flag: if kill_flag.is_none() {
             Arc::new(RwLock::new(false))

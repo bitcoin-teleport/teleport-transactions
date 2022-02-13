@@ -6,14 +6,18 @@ use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
+use bitcoin::Network;
+
+use crate::directory_servers::{
+    sync_maker_hosts_from_directory_servers, DirectoryServerError, TOR_ADDR,
+};
 use crate::error::Error;
 use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage};
 use crate::taker_protocol::{
     handshake_maker, read_message, send_message, FIRST_CONNECT_ATTEMPTS,
     FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
 };
-
-const TOR_ADDR: &str = "127.0.0.1:9150";
+use crate::wallet_sync::NETWORK;
 
 #[derive(Debug, Clone)]
 pub enum MakerAddress {
@@ -35,8 +39,13 @@ const REGTEST_MAKER_HOSTS: &'static [&'static str] = &[
     "localhost:46102",
 ];
 
-pub fn get_regtest_maker_hosts() -> Vec<&'static str> {
-    Vec::from(REGTEST_MAKER_HOSTS)
+fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
+    REGTEST_MAKER_HOSTS
+        .iter()
+        .map(|h| MakerAddress::Clearnet {
+            address: h.to_string(),
+        })
+        .collect::<Vec<MakerAddress>>()
 }
 
 impl MakerAddress {
@@ -117,27 +126,36 @@ async fn download_maker_offer(address: MakerAddress) -> Option<OfferAndAddress> 
     }
 }
 
-pub async fn sync_offerbook(maker_hostnames: &Vec<&str>) -> Vec<OfferAndAddress> {
+async fn sync_offerbook_with_hostnames(maker_addresses: Vec<MakerAddress>) -> Vec<OfferAndAddress> {
     let (offers_writer_m, mut offers_reader) = mpsc::channel::<Option<OfferAndAddress>>(100);
     //unbounded_channel makes more sense here, but results in a compile
     //error i cant figure out
 
-    for host in maker_hostnames {
+    let maker_addresses_len = maker_addresses.len();
+    for addr in maker_addresses {
         let offers_writer = offers_writer_m.clone();
-        let address = host.to_string();
         tokio::spawn(async move {
-            let addr = MakerAddress::Clearnet { address };
             if let Err(_e) = offers_writer.send(download_maker_offer(addr).await).await {
                 panic!("mpsc failed");
             }
         });
     }
-
     let mut result = Vec::<OfferAndAddress>::new();
-    for _ in 0..maker_hostnames.len() {
+    for _ in 0..maker_addresses_len {
         if let Some(offer_addr) = offers_reader.recv().await.unwrap() {
             result.push(offer_addr);
         }
     }
     result
+}
+
+pub async fn sync_offerbook() -> Result<Vec<OfferAndAddress>, DirectoryServerError> {
+    Ok(
+        sync_offerbook_with_hostnames(if NETWORK == Network::Regtest {
+            get_regtest_maker_addresses()
+        } else {
+            sync_maker_hosts_from_directory_servers(NETWORK).await?
+        })
+        .await,
+    )
 }

@@ -1,3 +1,14 @@
+//put your onion hostname and port here
+const MAKER_ONION_ADDR: &str = "myhiddenservicehostname.onion:6102";
+const ABSOLUTE_FEE_SAT: u64 = 1000;
+const AMOUNT_RELATIVE_FEE_PPB: u64 = 10_000_000;
+const TIME_RELATIVE_FEE_PPB: u64 = 100_000;
+const REQUIRED_CONFIRMS: i32 = 1;
+const MINIMUM_LOCKTIME: u16 = 3;
+const MIN_SIZE: u64 = 10000;
+
+//TODO this goes in the config file
+
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -22,6 +33,7 @@ use crate::contracts::{
     calculate_coinswap_fee, find_funding_output, read_hashvalue_from_contract,
     read_locktime_from_contract, MAKER_FUNDING_TX_VBYTE_SIZE,
 };
+use crate::directory_servers::post_maker_host_to_directory_servers;
 use crate::error::Error;
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
@@ -29,17 +41,9 @@ use crate::messages::{
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
-use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin};
+use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin, NETWORK};
 use crate::watchtower_client::{ping_watchtowers, register_coinswap_with_watchtowers};
 use crate::watchtower_protocol::{ContractTransaction, ContractsInfo};
-
-//TODO this goes in the config file
-const ABSOLUTE_FEE_SAT: u64 = 1000;
-const AMOUNT_RELATIVE_FEE_PPB: u64 = 10_000_000;
-const TIME_RELATIVE_FEE_PPB: u64 = 100_000;
-const REQUIRED_CONFIRMS: i32 = 1;
-const MINIMUM_LOCKTIME: u16 = 3;
-const MIN_SIZE: u64 = 10000;
 
 //used to configure the maker do weird things for testing
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +57,7 @@ pub struct MakerConfig {
     pub port: u16,
     pub rpc_ping_interval: u64,
     pub watchtower_ping_interval: u64,
+    pub directory_servers_refresh_interval: u64,
     pub maker_behavior: MakerBehavior,
     pub kill_flag: Arc<RwLock<bool>>,
     pub idle_connection_timeout: u64,
@@ -106,12 +111,19 @@ async fn run(
 
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
+
+    log::info!("Adding my address at the directory servers. . .");
+    post_maker_host_to_directory_servers(NETWORK, MAKER_ONION_ADDR)
+        .await
+        .unwrap();
+
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)).await?;
     log::info!("Listening On Port {}", config.port);
 
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
     let mut last_watchtowers_ping = Instant::now();
+    let mut last_directory_servers_refresh = Instant::now();
 
     let my_kill_flag = config.kill_flag.clone();
 
@@ -147,6 +159,20 @@ async fn run(
                 accepting_clients = rpc_ping_success && watchtowers_ping_success;
                 if *my_kill_flag.read().unwrap() {
                     break Err(Error::Protocol("kill flag is true"));
+                }
+
+                let directory_servers_refresh_interval = Duration::from_secs(
+                    config.directory_servers_refresh_interval
+                );
+                if Instant::now().saturating_duration_since(last_directory_servers_refresh)
+                        > directory_servers_refresh_interval {
+                    last_directory_servers_refresh = Instant::now();
+                    let result_expiry_time = post_maker_host_to_directory_servers(
+                        NETWORK,
+                        MAKER_ONION_ADDR
+                    ).await;
+                    log::info!("Refreshing my address at the directory servers = {:?}",
+                        result_expiry_time);
                 }
                 continue;
             },
