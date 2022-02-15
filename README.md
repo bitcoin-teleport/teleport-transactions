@@ -291,17 +291,17 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9745; code security, recover from aborts and deveations
 * &#9745; implement coinswap fees and taker paying for miner fees
 * &#9745; add support for connecting to makers that arent on localhost, and tor support
-* &#9744; code federated message board seeder servers
+* &#9745; code federated message board seeder servers
 * &#9744; ALPHA RELEASE FOR TESTNET, REGTEST, SIGNET AND MAINNET (FOR THE BRAVE ONES)
 * &#9744; code fidelity bonds
-* &#9744; add support precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
 * &#9744; have taker store the progress of a coinswap to file, so that the whole process can be easily paused and started
-* &#9744; automated tests (might be earlier in case its useful in test driven development)
-* &#9744; move wallet files and config to its own data directory ~/.teleport/
 * &#9744; have watchtower store data in a file, not in RAM
-* &#9744; add collateral inputs to receiver contract txes
 * &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to back up these wallets
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
+* &#9744; add support precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
+* &#9744; automated tests (might be earlier in case its useful in test driven development)
+* &#9744; move wallet files and config to its own data directory ~/.teleport/
+* &#9744; add collateral inputs to receiver contract txes
 * &#9744; implement branching and merging coinswaps for takers, so that they can create coinswaps even if they just have one UTXO
 * &#9744; add encrypted wallet files
 * &#9744; reproducible builds + pin dependencies to a hash
@@ -310,9 +310,10 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9744; find coins landing on already-used addresses and freeze them, to resist the [forced address reuse attack](https://en.bitcoin.it/wiki/Privacy#Forced_address_reuse)
 * &#9744; payjoin-with-coinswap with decoy UTXOs
 * &#9744; convert contracts which currently use script to instead use adaptor signatures, aiming to not reveal contracts in the backout case
-* &#9744; abstract away the Core RPC so that its functions can be done in another way, for example for the taker being supported as a plugin for electrum
+* &#9744; create a [web API](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/JSON-RPC-API-using-jmwalletd.md) similar to the [one in joinmarket](https://github.com/JoinMarket-Org/joinmarket-clientserver/issues/978)
 * &#9744; randomized locktimes, study with bayesian inference the best way to randomize them so that an individual maker learns as little information as possible from the locktime value
 * &#9744; anti-DOS protocol additions for maker (not using json but some kind of binary format that is harder to DOS)
+* &#9744; abstract away the Core RPC so that its functions can be done in another way, for example for the taker being supported as a plugin for electrum
 * &#9744; make the project into a plugin which can be used by other wallets to do the taker role, try to implement it for electrum wallet
 
 ## Community
