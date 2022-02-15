@@ -126,7 +126,9 @@ async fn download_maker_offer(address: MakerAddress) -> Option<OfferAndAddress> 
     }
 }
 
-async fn sync_offerbook_with_hostnames(maker_addresses: Vec<MakerAddress>) -> Vec<OfferAndAddress> {
+pub async fn sync_offerbook_with_hostnames(
+    maker_addresses: Vec<MakerAddress>,
+) -> Vec<OfferAndAddress> {
     let (offers_writer_m, mut offers_reader) = mpsc::channel::<Option<OfferAndAddress>>(100);
     //unbounded_channel makes more sense here, but results in a compile
     //error i cant figure out
@@ -149,13 +151,14 @@ async fn sync_offerbook_with_hostnames(maker_addresses: Vec<MakerAddress>) -> Ve
     result
 }
 
+pub async fn get_advertised_maker_hosts() -> Result<Vec<MakerAddress>, DirectoryServerError> {
+    Ok(if NETWORK == Network::Regtest {
+        get_regtest_maker_addresses()
+    } else {
+        sync_maker_hosts_from_directory_servers(NETWORK).await?
+    })
+}
+
 pub async fn sync_offerbook() -> Result<Vec<OfferAndAddress>, DirectoryServerError> {
-    Ok(
-        sync_offerbook_with_hostnames(if NETWORK == Network::Regtest {
-            get_regtest_maker_addresses()
-        } else {
-            sync_maker_hosts_from_directory_servers(NETWORK).await?
-        })
-        .await,
-    )
+    Ok(sync_offerbook_with_hostnames(get_advertised_maker_hosts().await?).await)
 }

@@ -74,6 +74,9 @@ enum Subcommand {
         hashvalue: Hash160,
     },
 
+    /// Download all offers from all makers out there. Optionally download from one given maker
+    DownloadOffers { maker_address: Option<String> },
+
     /// Send a transaction from the wallet
     DirectSend {
         /// Amount to send (in sats), or "sweep" for sweep
@@ -149,6 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 hashvalue,
                 args.dont_broadcast,
             );
+        }
+        Subcommand::DownloadOffers { maker_address } => {
+            teleport::download_and_display_offers(maker_address);
         }
         Subcommand::DirectSend {
             send_amount,

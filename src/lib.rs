@@ -3,6 +3,7 @@ extern crate bitcoin_wallet;
 extern crate bitcoincore_rpc;
 
 use dirs::home_dir;
+use std::collections::HashMap;
 use std::io;
 use std::iter::repeat;
 use std::path::PathBuf;
@@ -28,10 +29,12 @@ use maker_protocol::MakerBehavior;
 pub mod taker_protocol;
 use taker_protocol::TakerConfig;
 
+pub mod offerbook_sync;
+use offerbook_sync::{get_advertised_maker_hosts, sync_offerbook_with_hostnames, MakerAddress};
+
 pub mod directory_servers;
 pub mod error;
 pub mod messages;
-pub mod offerbook_sync;
 pub mod watchtower_client;
 pub mod watchtower_protocol;
 
@@ -497,6 +500,60 @@ pub fn recover_from_incomplete_coinswap(
         } else {
             let txid = rpc.send_raw_transaction(&signed_contract_tx).unwrap();
             println!("broadcasted {}", txid);
+        }
+    }
+}
+
+#[tokio::main]
+pub async fn download_and_display_offers(maker_address: Option<String>) {
+    let maker_addresses = if let Some(maker_addr) = maker_address {
+        vec![MakerAddress::Tor {
+            address: maker_addr,
+        }]
+    } else {
+        get_advertised_maker_hosts()
+            .await
+            .expect("unable to sync maker addresses from directory servers")
+    };
+    let offers_addresses = sync_offerbook_with_hostnames(maker_addresses.clone()).await;
+    let mut addresses_offers_map = HashMap::new();
+    for offer_address in offers_addresses.iter() {
+        let address_str = match &offer_address.address {
+            MakerAddress::Clearnet { address } => address,
+            MakerAddress::Tor { address } => address,
+        };
+        addresses_offers_map.insert(address_str, offer_address);
+    }
+
+    println!(
+        "{:70} {:12} {:12} {:12} {:12} {:12} {:12}",
+        "maker address",
+        "max size",
+        "min size",
+        "abs fee",
+        "amt rel fee",
+        "time rel fee",
+        "minlocktime"
+    );
+    for address in maker_addresses {
+        let address_str = match &address {
+            MakerAddress::Clearnet { address } => address,
+            MakerAddress::Tor { address } => address,
+        };
+        if let Some(offer_address) = addresses_offers_map.get(&address_str) {
+            let o = &offer_address.offer;
+            println!(
+                "{:70} {:12} {:12} {:12} {:12} {:12} {:12}",
+                address,
+                o.max_size,
+                o.min_size,
+                o.absolute_fee_sat,
+                o.amount_relative_fee_ppb,
+                o.time_relative_fee_ppb,
+                o.minimum_locktime
+            );
+        } else {
+            println!("{:70} UNREACHABLE", address);
         }
     }
 }
