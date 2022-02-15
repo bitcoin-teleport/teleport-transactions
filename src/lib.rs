@@ -526,7 +526,8 @@ pub async fn download_and_display_offers(maker_address: Option<String>) {
     }
 
     println!(
-        "{:70} {:12} {:12} {:12} {:12} {:12} {:12}",
+        "{:3} {:70} {:12} {:12} {:12} {:12} {:12} {:12}",
+        "n",
         "maker address",
         "max size",
         "min size",
@@ -535,7 +536,7 @@ pub async fn download_and_display_offers(maker_address: Option<String>) {
         "time rel fee",
         "minlocktime"
     );
-    for address in maker_addresses {
+    for (ii, address) in maker_addresses.iter().enumerate() {
         let address_str = match &address {
             MakerAddress::Clearnet { address } => address,
             MakerAddress::Tor { address } => address,
@@ -543,7 +544,8 @@ pub async fn download_and_display_offers(maker_address: Option<String>) {
         if let Some(offer_address) = addresses_offers_map.get(&address_str) {
             let o = &offer_address.offer;
             println!(
-                "{:70} {:12} {:12} {:12} {:12} {:12} {:12}",
+                "{:3} {:70} {:12} {:12} {:12} {:12} {:12} {:12}",
+                ii,
                 address,
                 o.max_size,
                 o.min_size,
@@ -553,7 +555,7 @@ pub async fn download_and_display_offers(maker_address: Option<String>) {
                 o.minimum_locktime
             );
         } else {
-            println!("{:70} UNREACHABLE", address);
+            println!("{:3} {:70} UNREACHABLE", ii, address);
         }
     }
 }
