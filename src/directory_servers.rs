@@ -29,7 +29,7 @@ fn network_enum_to_string(network: Network) -> &'static str {
     }
 }
 
-pub async fn sync_maker_hosts_from_directory_servers(
+pub async fn sync_maker_addresses_from_directory_servers(
     network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
     // https://github.com/seanmonstar/reqwest/blob/master/examples/tor_socks.rs
@@ -59,13 +59,13 @@ pub async fn sync_maker_hosts_from_directory_servers(
         maker_addresses.push(MakerAddress::Tor {
             address: String::from(csv_chunks[1]),
         });
-        log::debug!(target:"directory_servers", "expiry timestamp = {} hostname = {}",
+        log::debug!(target:"directory_servers", "expiry timestamp = {} address = {}",
             csv_chunks[0], csv_chunks[1]);
     }
     Ok(maker_addresses)
 }
 
-pub async fn post_maker_host_to_directory_servers(
+pub async fn post_maker_address_to_directory_servers(
     network: Network,
     address: &str,
 ) -> Result<u64, DirectoryServerError> {

@@ -30,7 +30,7 @@ pub mod taker_protocol;
 use taker_protocol::TakerConfig;
 
 pub mod offerbook_sync;
-use offerbook_sync::{get_advertised_maker_hosts, sync_offerbook_with_hostnames, MakerAddress};
+use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress};
 
 pub mod directory_servers;
 pub mod error;
@@ -511,11 +511,11 @@ pub async fn download_and_display_offers(maker_address: Option<String>) {
             address: maker_addr,
         }]
     } else {
-        get_advertised_maker_hosts()
+        get_advertised_maker_addresses()
             .await
             .expect("unable to sync maker addresses from directory servers")
     };
-    let offers_addresses = sync_offerbook_with_hostnames(maker_addresses.clone()).await;
+    let offers_addresses = sync_offerbook_with_addresses(maker_addresses.clone()).await;
     let mut addresses_offers_map = HashMap::new();
     for offer_address in offers_addresses.iter() {
         let address_str = match &offer_address.address {

@@ -1,5 +1,5 @@
-//put your onion hostname and port here
-const MAKER_ONION_ADDR: &str = "myhiddenservicehostname.onion:6102";
+//put your onion address and port here
+const MAKER_ONION_ADDR: &str = "myhiddenserviceaddress.onion:6102";
 const ABSOLUTE_FEE_SAT: u64 = 1000;
 const AMOUNT_RELATIVE_FEE_PPB: u64 = 10_000_000;
 const TIME_RELATIVE_FEE_PPB: u64 = 100_000;
@@ -33,7 +33,7 @@ use crate::contracts::{
     calculate_coinswap_fee, find_funding_output, read_hashvalue_from_contract,
     read_locktime_from_contract, MAKER_FUNDING_TX_VBYTE_SIZE,
 };
-use crate::directory_servers::post_maker_host_to_directory_servers;
+use crate::directory_servers::post_maker_address_to_directory_servers;
 use crate::error::Error;
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
@@ -114,7 +114,7 @@ async fn run(
 
     if NETWORK != Network::Regtest {
         log::info!("Adding my address at the directory servers. . .");
-        post_maker_host_to_directory_servers(NETWORK, MAKER_ONION_ADDR)
+        post_maker_address_to_directory_servers(NETWORK, MAKER_ONION_ADDR)
             .await
             .unwrap();
     }
@@ -170,7 +170,7 @@ async fn run(
                         && Instant::now().saturating_duration_since(last_directory_servers_refresh)
                         > directory_servers_refresh_interval {
                     last_directory_servers_refresh = Instant::now();
-                    let result_expiry_time = post_maker_host_to_directory_servers(
+                    let result_expiry_time = post_maker_address_to_directory_servers(
                         NETWORK,
                         MAKER_ONION_ADDR
                     ).await;
