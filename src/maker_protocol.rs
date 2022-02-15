@@ -55,9 +55,9 @@ pub enum MakerBehavior {
 #[derive(Debug, Clone)]
 pub struct MakerConfig {
     pub port: u16,
-    pub rpc_ping_interval: u64,
-    pub watchtower_ping_interval: u64,
-    pub directory_servers_refresh_interval: u64,
+    pub rpc_ping_interval_secs: u64,
+    pub watchtower_ping_interval_secs: u64,
+    pub directory_servers_refresh_interval_secs: u64,
     pub maker_behavior: MakerBehavior,
     pub kill_flag: Arc<RwLock<bool>>,
     pub idle_connection_timeout: u64,
@@ -145,9 +145,14 @@ async fn run(
                 }
                 break Err(client_err.unwrap());
             },
-            _ = sleep(Duration::from_secs(config.rpc_ping_interval)) => {
-                let rpc_ping_success = wallet.write().unwrap().refresh_offer_maxsize_cache(Arc::clone(&rpc)).is_ok();
-                let watchtowers_ping_interval = Duration::from_secs(config.watchtower_ping_interval);
+            _ = sleep(Duration::from_secs(config.rpc_ping_interval_secs)) => {
+                let rpc_ping_success = wallet
+                    .write()
+                    .unwrap()
+                    .refresh_offer_maxsize_cache(Arc::clone(&rpc))
+                    .is_ok();
+                let watchtowers_ping_interval
+                    = Duration::from_secs(config.watchtower_ping_interval_secs);
                 let (watchtowers_ping_success, debug_msg) = if Instant::now()
                         .saturating_duration_since(last_watchtowers_ping)
                         > watchtowers_ping_interval {
@@ -164,7 +169,7 @@ async fn run(
                 }
 
                 let directory_servers_refresh_interval = Duration::from_secs(
-                    config.directory_servers_refresh_interval
+                    config.directory_servers_refresh_interval_secs
                 );
                 if NETWORK != Network::Regtest
                         && Instant::now().saturating_duration_since(last_directory_servers_refresh)

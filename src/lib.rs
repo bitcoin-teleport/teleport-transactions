@@ -387,9 +387,9 @@ pub fn run_maker(
     let wallet_ptr = Arc::new(RwLock::new(wallet));
     let config = maker_protocol::MakerConfig {
         port,
-        rpc_ping_interval: 60,
-        watchtower_ping_interval: 300,
-        directory_servers_refresh_interval: 60 * 60 * 12, //12 hours
+        rpc_ping_interval_secs: 60,
+        watchtower_ping_interval_secs: 300,
+        directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 hours
         maker_behavior,
         kill_flag: if kill_flag.is_none() {
             Arc::new(RwLock::new(false))
