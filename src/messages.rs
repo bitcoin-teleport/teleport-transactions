@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::util::key::PublicKey;
+use bitcoin::util::ecdsa::PublicKey;
 use bitcoin::{Script, Transaction};
 
 pub const PREIMAGE_LEN: usize = 32;

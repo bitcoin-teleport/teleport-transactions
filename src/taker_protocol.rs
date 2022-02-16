@@ -15,7 +15,7 @@ use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::hashes::{hex::ToHex, Hash};
 use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::util::key::PublicKey;
+use bitcoin::util::ecdsa::PublicKey;
 use bitcoin::{BlockHash, OutPoint, Script, Transaction, Txid};
 use bitcoincore_rpc::{Client, RpcApi};
 

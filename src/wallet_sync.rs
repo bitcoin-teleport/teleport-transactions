@@ -30,7 +30,7 @@ use bitcoin::{
     util::{
         bip143::SigHashCache,
         bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey},
-        key::PublicKey,
+        ecdsa::PublicKey,
         psbt::serialize::Serialize,
     },
     Address, Amount, Network, OutPoint, SigHashType, Transaction, TxIn, TxOut, Txid,

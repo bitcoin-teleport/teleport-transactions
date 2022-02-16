@@ -11,7 +11,7 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Message, Secp256k1, SecretKey, Signature},
     util::bip143::SigHashCache,
-    util::key::PublicKey,
+    util::ecdsa::PublicKey,
     Address, OutPoint, SigHashType, Transaction, TxIn, TxOut,
 };
 
