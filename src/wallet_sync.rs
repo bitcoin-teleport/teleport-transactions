@@ -685,7 +685,10 @@ impl Wallet {
 
     fn is_swapcoin_descriptor_imported(&self, rpc: &Client, descriptor: &str) -> bool {
         let addr = rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
-        rpc.get_address_info(&addr).unwrap().is_watchonly.unwrap_or(false)
+        rpc.get_address_info(&addr)
+            .unwrap()
+            .is_watchonly
+            .unwrap_or(false)
     }
 
     pub fn get_hd_wallet_descriptors(&self, rpc: &Client) -> Result<Vec<String>, Error> {

@@ -403,6 +403,7 @@ pub fn run_maker(
 pub fn run_taker(
     wallet_file_name: &PathBuf,
     sync_amount: WalletSyncAddressAmount,
+    fee_rate: u64,
     send_amount: u64,
     maker_count: u16,
     tx_count: u32,
@@ -430,7 +431,7 @@ pub fn run_taker(
             maker_count,
             tx_count,
             required_confirms: 1,
-            fee_rate: 1000, //satoshis per thousand vbytes, i.e. 1000 = 1 sat/vb
+            fee_rate,
         },
     );
 }
@@ -561,6 +562,7 @@ pub async fn download_and_display_offers(maker_address: Option<String>) {
 
 pub fn direct_send(
     wallet_file_name: &PathBuf,
+    fee_rate: u64,
     send_amount: SendAmount,
     destination: Destination,
     coins_to_spend: &[CoinToSpend],
@@ -583,16 +585,22 @@ pub fn direct_send(
         };
     wallet.startup_sync(&rpc).unwrap();
     let tx = wallet
-        .create_direct_send(&rpc, send_amount, destination, coins_to_spend)
+        .create_direct_send(&rpc, fee_rate, send_amount, destination, coins_to_spend)
         .unwrap();
-    if dont_broadcast {
-        let txhex = bitcoin::consensus::encode::serialize_hex(&tx);
-        let accepted = rpc
-            .test_mempool_accept(&[txhex.clone()])
+    let txhex = bitcoin::consensus::encode::serialize_hex(&tx);
+    let test_mempool_accept_result = &rpc.test_mempool_accept(&[txhex.clone()]).unwrap()[0];
+    assert!(test_mempool_accept_result.allowed);
+    println!(
+        "actual fee rate = {:.3} sat/vb",
+        test_mempool_accept_result
+            .fees
+            .as_ref()
             .unwrap()
-            .iter()
-            .any(|tma| tma.allowed);
-        assert!(accepted);
+            .base
+            .as_sat() as f64
+            / test_mempool_accept_result.vsize.unwrap() as f64
+    );
+    if dont_broadcast {
         println!("tx = \n{}", txhex);
     } else {
         let txid = rpc.send_raw_transaction(&tx).unwrap();

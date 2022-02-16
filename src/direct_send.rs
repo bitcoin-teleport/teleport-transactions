@@ -101,6 +101,7 @@ impl Wallet {
     pub fn create_direct_send(
         &mut self,
         rpc: &Client,
+        fee_rate: u64,
         send_amount: SendAmount,
         destination: Destination,
         coins_to_spend: &[CoinToSpend],
@@ -178,7 +179,7 @@ impl Wallet {
         if dest_addr.network != NETWORK {
             panic!("wrong address network type (e.g. testnet, regtest)");
         }
-        let miner_fee = 2000; //TODO do this calculation properly
+        let miner_fee = 500 * fee_rate / 1000; //TODO this is just a rough estimate now
 
         let mut output = Vec::<TxOut>::new();
         let total_input_value = unspent_inputs

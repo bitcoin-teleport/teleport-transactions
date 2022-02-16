@@ -23,6 +23,10 @@ struct ArgsWithWalletFile {
     #[structopt(short, long)]
     dont_broadcast: bool,
 
+    /// Miner fee rate, in satoshis per thousand vbytes, i.e. 1000 = 1 sat/vb
+    #[structopt(default_value = "1000", short = "f", long)]
+    fee_rate: u64,
+
     /// Subcommand
     #[structopt(flatten)]
     subcommand: Subcommand,
@@ -141,6 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             teleport::run_taker(
                 &args.wallet_file_name,
                 WalletSyncAddressAmount::Normal,
+                args.fee_rate,
                 send_amount,
                 maker_count.unwrap_or(2),
                 tx_count.unwrap_or(3),
@@ -163,6 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             teleport::direct_send(
                 &args.wallet_file_name,
+                args.fee_rate,
                 send_amount,
                 destination,
                 &coins_to_spend,
