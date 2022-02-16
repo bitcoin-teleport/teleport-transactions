@@ -68,9 +68,8 @@ pub fn get_bitcoin_rpc() -> Result<Client, Error> {
         }
     };
     let rpc = Client::new(
-        "http://localhost:18443/wallet/teleport"
-            //"http://localhost:18332/wallet/teleport"
-            .to_string(),
+        "http://localhost:18443/wallet/teleport",
+        //"http://localhost:18332/wallet/teleport",
         auth,
     )?;
     rpc.get_blockchain_info()?;

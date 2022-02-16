@@ -25,6 +25,7 @@ fn network_enum_to_string(network: Network) -> &'static str {
     match network {
         Network::Bitcoin => "mainnet",
         Network::Testnet => "testnet",
+        Network::Signet => "signet",
         Network::Regtest => panic!("dont use directory servers if using regtest"),
     }
 }
