@@ -48,9 +48,10 @@ use crate::watchtower_protocol::{
     check_for_broadcasted_contract_txes, ContractTransaction, ContractsInfo,
 };
 
-//relatively low value for now so that its easier to test on regtest
-pub const REFUND_LOCKTIME: u16 = 3; //in blocks
-pub const REFUND_LOCKTIME_STEP: u16 = 3; //in blocks
+//relatively low value for now so that its easier to test without having to wait too much
+//right now only the very brave will try coinswap out on mainnet with non-trivial amounts
+pub const REFUND_LOCKTIME: u16 = 48; //in blocks
+pub const REFUND_LOCKTIME_STEP: u16 = 48; //in blocks
 
 //first connect means the first time you're ever connecting, without having gotten any txes
 // confirmed yet, so the taker will not be very persistent since there should be plenty of other

@@ -1,3 +1,10 @@
+//TODO this goes in the config file
+pub const NETWORK: Network = Network::Regtest;
+//other options: Network::Signet, Network::Bitcoin, Network::Testnet
+//Signet is probably the best for this early stage of the project if
+// you want to coinswap with other people
+//Mainnet/Bitcoin only for the brave
+
 // this file contains code handling the wallet and sync'ing the wallet
 // for now the wallet is only sync'd via bitcoin core's RPC
 // makers will only ever sync this way, but one day takers may sync in other
@@ -57,8 +64,6 @@ use crate::messages::Preimage;
 //data in the bitcoin core wallet
 //for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
-//TODO this goes in the config file
-pub const NETWORK: Network = Network::Regtest; //not configurable for now
 const DERIVATION_PATH: &str = "m/84'/1'/0'";
 const WALLET_FILE_VERSION: u32 = 0;
 

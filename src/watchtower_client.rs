@@ -1,3 +1,5 @@
+const WATCHTOWER_HOSTPORT: &str = "localhost:6103";
+
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -47,8 +49,7 @@ async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Resu
     //TODO add support for registering with multiple watchtowers concurrently
     //TODO add timeouts to deal with indefinite hangs
 
-    let host = "localhost:6103";
-    let mut socket = TcpStream::connect(host).await?;
+    let mut socket = TcpStream::connect(WATCHTOWER_HOSTPORT).await?;
 
     let (socket_reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(socket_reader);

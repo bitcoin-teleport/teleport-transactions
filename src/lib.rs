@@ -1,3 +1,9 @@
+const RPC_CREDENTIALS: Option<(&str, &str)> = Some(("regtestrpcuser", "regtestrpcpass"));
+//None; // use Bitcoin Core cookie-based authentication
+
+const RPC_HOSTPORT: &str = "localhost:18443";
+const RPC_WALLET: &str = "teleport";
+
 extern crate bitcoin;
 extern crate bitcoin_wallet;
 extern crate bitcoincore_rpc;
@@ -40,24 +46,7 @@ pub mod watchtower_protocol;
 
 static INIT: Once = Once::new();
 
-/// Setup function that will only run once, even if called multiple times.
-pub fn setup_logger() {
-    INIT.call_once(|| {
-        env_logger::Builder::from_env(
-            env_logger::Env::default()
-                .default_filter_or("teleport=info,main=info,wallet=info")
-                .default_write_style_or("always"),
-        )
-        .init();
-    });
-}
-
 pub fn get_bitcoin_rpc() -> Result<Client, Error> {
-    //TODO put all this in a config file
-    const RPC_CREDENTIALS: Option<(&str, &str)> = Some(("regtestrpcuser", "regtestrpcpass"));
-    //Some(("btcrpcuser", "btcrpcpass"));
-    //None; // use Bitcoin Core cookie-based authentication
-
     let auth = match RPC_CREDENTIALS {
         Some((user, pass)) => Auth::UserPass(user.to_string(), pass.to_string()),
         None => {
@@ -68,12 +57,23 @@ pub fn get_bitcoin_rpc() -> Result<Client, Error> {
         }
     };
     let rpc = Client::new(
-        "http://localhost:18443/wallet/teleport",
-        //"http://localhost:18332/wallet/teleport",
+        &format!("http://{}/wallet/{}", RPC_HOSTPORT, RPC_WALLET),
         auth,
     )?;
     rpc.get_blockchain_info()?;
     Ok(rpc)
+}
+
+/// Setup function that will only run once, even if called multiple times.
+pub fn setup_logger() {
+    INIT.call_once(|| {
+        env_logger::Builder::from_env(
+            env_logger::Env::default()
+                .default_filter_or("teleport=info,main=info,wallet=info")
+                .default_write_style_or("always"),
+        )
+        .init();
+    });
 }
 
 pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {

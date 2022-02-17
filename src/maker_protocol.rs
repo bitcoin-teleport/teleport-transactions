@@ -4,7 +4,7 @@ const ABSOLUTE_FEE_SAT: u64 = 1000;
 const AMOUNT_RELATIVE_FEE_PPB: u64 = 10_000_000;
 const TIME_RELATIVE_FEE_PPB: u64 = 100_000;
 const REQUIRED_CONFIRMS: i32 = 1;
-const MINIMUM_LOCKTIME: u16 = 3;
+const MINIMUM_LOCKTIME: u16 = 48;
 const MIN_SIZE: u64 = 10000;
 
 //TODO this goes in the config file

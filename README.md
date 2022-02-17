@@ -13,7 +13,7 @@ Project design document: [Design for a CoinSwap Implementation for Massively Imp
 ## Contents
 
 - [State of the project](#state-of-the-project)
-- [How to create a CoinSwap on regtest or testnet](#how-to-create-a-coinswap-on-regtest-or-testnet)
+- [How to create a CoinSwap on regtest](#how-to-create-a-coinswap-on-regtest)
 - [Developer resources](#developer-resources)
 - [Protocol between takers and makers](#protocol-between-takers-and-makers)
 - [Notes on architecture](#notes-on-architecture)
@@ -24,13 +24,13 @@ Project design document: [Design for a CoinSwap Implementation for Massively Imp
 
 The project is nowhere near usable. The code written so far is published for developers to play around with. It doesn't have config files yet so you have to edit the source files to configure stuff.
 
-## How to create a CoinSwap on regtest or testnet
+## How to create a CoinSwap on regtest
 
 * Install [rust](https://www.rust-lang.org/) on your machine.
 
 * Start up Bitcoin Core in regtest mode. Make sure the RPC server is enabled with `server=1` and that rpc username and password are set with `rpcuser=yourrpcusername` and `rpcpassword=yourrpcpassword` in the configuration file.
 
-* Download this git repository. Open the file `src/main.rs` and edit the RPC username and password in the function `get_bitcoin_rpc`. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same function.
+* Download this git repository. Open the file `src/lib.rs` and edit the RPC username and password right at the top of the file. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same place.
 
 * Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` thrice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
 
@@ -117,7 +117,13 @@ coin count = 6
 total balance = 0.14974828 BTC
 ```
 
-* To switch between regtest and testnet, edit the constant `NETWORK` which is found near the top of the file `src/wallet_sync.rs`. To edit the coinswap send amount, or the number of taker and maker transactions, look in the file `src/taker_protocol.rs` near the top of the function `send_coinswap`.
+## How to create a CoinSwap on networks other than regtest
+
+* To switch between networks like regtest, signet, testnet or mainnet (for the brave), edit the constant `NETWORK` which is found at the top of the file `src/wallet_sync.rs`.
+
+* To run a yield generator (maker) on any network apart from regtest, you will need to create a tor hidden service for your maker. Search the web for "setup tor hidden service", a good article is [this one](https://www.linuxjournal.com/content/tor-hidden-services). When you have your hidden service hostname, copy it into the field near the top of the file `src/maker_protocol.rs`.
+
+* After a successful coinswap created with `do-coinswap`, the coins will still be in the wallet. You can send them out somewhere else using the command `direct-send` and providing the coin(s). For example `cargo run -- --wallet-file-name=taker.teleport direct-send sweep <destination-address> 9bfeec..0cc468:0`. Coins in the wallet can be found by running `wallet-balance` as above.
 
 
 ## Developer resources
