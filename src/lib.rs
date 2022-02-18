@@ -1,8 +1,9 @@
 const RPC_CREDENTIALS: Option<(&str, &str)> = Some(("regtestrpcuser", "regtestrpcpass"));
 //None; // use Bitcoin Core cookie-based authentication
 
-const RPC_HOSTPORT: &str = "localhost:18443";
 const RPC_WALLET: &str = "teleport";
+const RPC_HOSTPORT: &str = "localhost:18443";
+//default ports: mainnet=8332, testnet=18332, regtest=18443, signet=38332
 
 extern crate bitcoin;
 extern crate bitcoin_wallet;
@@ -57,7 +58,7 @@ pub fn get_bitcoin_rpc() -> Result<Client, Error> {
         }
     };
     let rpc = Client::new(
-        &format!("http://{}/wallet/{}", RPC_HOSTPORT, RPC_WALLET),
+        format!("http://{}/wallet/{}", RPC_HOSTPORT, RPC_WALLET),
         auth,
     )?;
     rpc.get_blockchain_info()?;

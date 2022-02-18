@@ -1,5 +1,5 @@
 //configure this with your own tor port
-pub const TOR_ADDR: &str = "127.0.0.1:9150";
+pub const TOR_ADDR: &str = "127.0.0.1:9050";
 
 use bitcoin::Network;
 
