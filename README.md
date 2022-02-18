@@ -13,7 +13,9 @@ Project design document: [Design for a CoinSwap Implementation for Massively Imp
 ## Contents
 
 - [State of the project](#state-of-the-project)
-- [How to create a CoinSwap on regtest](#how-to-create-a-coinswap-on-regtest)
+- [How to create a CoinSwap on regtest with yourself](#how-to-create-a-coinswap-on-regtest-with-yourself)
+- [How to create a CoinSwap on networks other than regtest](#how-to-create-a-coinswap-on-networks-other-than-regtest)
+- [How to recover from a failed coinswap](#how-to-recover-from-a-failed-coinswap)
 - [Developer resources](#developer-resources)
 - [Protocol between takers and makers](#protocol-between-takers-and-makers)
 - [Notes on architecture](#notes-on-architecture)
@@ -22,7 +24,7 @@ Project design document: [Design for a CoinSwap Implementation for Massively Imp
 
 ## State of the project
 
-The project is nearly usable. The code written so far is published for developers and power users to play around with. It doesn't have config files yet so you have to edit the source files to configure stuff. It is possible to run it on mainnet, but only the brave will attempt that, and only with small amounts.
+The project is nearly usable, though it doesnt have all the necessary features yet. The code written so far is published for developers and power users to play around with. It doesn't have config files yet so you have to edit the source files to configure stuff. It is possible to run it on mainnet, but only the brave will attempt that, and only with small amounts.
 
 ## How to create a CoinSwap on regtest with yourself
 
@@ -128,6 +130,54 @@ total balance = 0.14974828 BTC
 * To run a yield generator (maker) on any network apart from regtest, you will need to create a tor hidden service for your maker. Search the web for "setup tor hidden service", a good article is [this one](https://www.linuxjournal.com/content/tor-hidden-services). When you have your hidden service hostname, copy it into the field near the top of the file `src/maker_protocol.rs`. Run with `cargo run -- --wallet-file-name=maker.teleport run-yield-generator` (note that you can omit the port number, the default port is 6102, specifying a different port number is only really needed for regtest where multiple makers are running on the same machine).
 
 * After a successful coinswap created with `do-coinswap`, the coins will still be in the wallet. You can send them out somewhere else using the command `direct-send` and providing the coin(s). For example `cargo run -- --wallet-file-name=taker.teleport direct-send sweep <destination-address> 9bfeec..0cc468:0`. Coins in the wallet can be found by running `wallet-balance` as above.
+
+## How to recover from a failed coinswap
+
+* CoinSwaps can sometimes fail. Nobody will lose their funds, but they can have their time wasted and have spent miner fees without achieving any privacy gain (or even making their privacy worse, at least until scriptless script contracts are implemented). Everybody is incentivized so that this doesnt happen, and takers are coded to be very persistent in reestablishing a connection with makers before giving up, but sometimes failures will still happen.
+
+* The major way that CoinSwaps can fail is if a taker locks up funds in a 2-of-2 multisig with a maker, but then that maker becomes non-responsive and so the CoinSwap doesn't complete. The taker is left with their money in a multisig and has to use their pre-signed contract transaction to get their money back after a timeout. This section explains how to do that.
+
+* Failed or incomplete coinswaps will show up in wallet display in another section: `cargo run -- --wallet-file-name=taker.teleport wallet-balance`. Example:
+
+```
+= spendable wallet balance =
+coin             address                    type   conf    value
+9cd867..f80d57:1 bcrt1qgscq....xkxg68mq02   seed   212     0.11103591 BTC
+13a0f4..947ab8:1 bcrt1qwfyl....wf0eyf5kuf   seed   212     0.07666832 BTC
+901514..10713b:0 bcrt1qghs3....qsg8al2ch4   seed   95      0.04371040 BTC
+2fe664..db1a59:0 bcrt1ql83h....hht5vc97dl   seed   94      0.50990000 BTC
+coin count = 4
+total balance = 0.74131463 BTC
+= incomplete coinswaps =
+coin             type     preimage locktime/blocks conf    value
+10149d..0d0314:1 timelock unknown         9        24      0.00029472 BTC
+b36e34..51fa3b:0 timelock unknown         9        24      0.00905248 BTC
+2b2e2d..c6db9e:1 timelock unknown         9        24      0.00065280 BTC
+outgoing balance = 0.01000000 BTC
+hashvalue = a4c2fe816bf18afb8b1861138e57a51bd70e29d4
+```
+
+* In this example there is an incomplete coinswap involving three funding transactions, we must take the hashvalue `a4c2fe816bf18afb8b1861138e57a51bd70e29d4` and pass it to the main subroutine: `cargo run -- --wallet-file-name=taker.teleport recover-from-incomplete-coinswap a4c2fe816bf18afb8b1861138e57a51bd70e29d4`.
+
+* Displaying the wallet balance again (`cargo run -- --wallet-file-name=taker.teleport wallet-balance`) after the transactions are broadcast will show the coins in the timelocked contracts section:
+
+```
+= spendable wallet balance =
+coin             address                    type   conf    value
+9cd867..f80d57:1 bcrt1qgscq....xkxg68mq02   seed   212     0.11103591 BTC
+13a0f4..947ab8:1 bcrt1qwfyl....wf0eyf5kuf   seed   212     0.07666832 BTC
+901514..10713b:0 bcrt1qghs3....qsg8al2ch4   seed   95      0.04371040 BTC
+2fe664..db1a59:0 bcrt1ql83h....hht5vc97dl   seed   94      0.50990000 BTC
+coin count = 4
+total balance = 0.74131463 BTC
+= live timelocked contracts =
+coin             hashvalue  timelock conf    locked?  value
+452a99..95f364:0 a4c2fe81.. 9        0       locked   0.00904248 BTC
+dcfd27..56108a:0 a4c2fe81.. 9        0       locked   0.00064280 BTC
+6a8328..f2f5ae:0 a4c2fe81.. 9        0       locked   0.00028472 BTC
+```
+
+* Right now these coins are protected by timelocked contracts which are not yet spendable, but after a number of blocks they will be added to the spendable wallet balance, where they can be spent either in a coinswap or with `direct-send`.
 
 
 ## Developer resources
