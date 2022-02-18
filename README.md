@@ -22,15 +22,15 @@ Project design document: [Design for a CoinSwap Implementation for Massively Imp
 
 ## State of the project
 
-The project is nowhere near usable. The code written so far is published for developers to play around with. It doesn't have config files yet so you have to edit the source files to configure stuff.
+The project is nearly usable. The code written so far is published for developers and power users to play around with. It doesn't have config files yet so you have to edit the source files to configure stuff. It is possible to run it on mainnet, but only the brave will attempt that, and only with small amounts.
 
-## How to create a CoinSwap on regtest
+## How to create a CoinSwap on regtest with yourself
 
 * Install [rust](https://www.rust-lang.org/) on your machine.
 
 * Start up Bitcoin Core in regtest mode. Make sure the RPC server is enabled with `server=1` and that rpc username and password are set with `rpcuser=yourrpcusername` and `rpcpassword=yourrpcpassword` in the configuration file.
 
-* Download this git repository. Open the file `src/lib.rs` and edit the RPC username and password right at the top of the file. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same place.
+* Download the [latest release](https://github.com/bitcoin-teleport/teleport-transactions/releases). Open the file `src/lib.rs` and edit the RPC username and password right at the top of the file. Make sure your Bitcoin Core has a wallet called `teleport`, or edit the name in the same place.
 
 * Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` thrice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
 
@@ -68,7 +68,7 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-* On another terminal run a watchtower with `cargo run -- run-watchtower`. You should see the message `Starting teleport watchtower`. In the teleport project contracts are enforced with one or more watchtowers, which are required for the coinswap protocol to be secure against the maker's coins being stolen.
+* On another terminal run a watchtower with `cargo run -- run-watchtower`. You should see the message `Starting teleport watchtower`. In the teleport project, contracts are enforced with one or more watchtowers which are required for the coinswap protocol to be secure against the maker's coins being stolen.
 
 * On one terminal run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-yield-generator 6102`. You should see the message `Listening on port 6102`.
 
@@ -119,9 +119,13 @@ total balance = 0.14974828 BTC
 
 ## How to create a CoinSwap on networks other than regtest
 
+* This is done in pretty much the same way as on the regtest network. On public networks you don't always have to coinswap with yourself by creating and funding multiple wallets, instead you could coinswap with other users out there.
+
 * To switch between networks like regtest, signet, testnet or mainnet (for the brave), edit the constant `NETWORK` which is found at the top of the file `src/wallet_sync.rs`.
 
-* To run a yield generator (maker) on any network apart from regtest, you will need to create a tor hidden service for your maker. Search the web for "setup tor hidden service", a good article is [this one](https://www.linuxjournal.com/content/tor-hidden-services). When you have your hidden service hostname, copy it into the field near the top of the file `src/maker_protocol.rs`.
+* You will need Tor running on the same machine, then open the file `src/directory_servers.rs` and make sure the const `TOR_ADDR` has the correct Tor port.
+
+* To run a yield generator (maker) on any network apart from regtest, you will need to create a tor hidden service for your maker. Search the web for "setup tor hidden service", a good article is [this one](https://www.linuxjournal.com/content/tor-hidden-services). When you have your hidden service hostname, copy it into the field near the top of the file `src/maker_protocol.rs`. Run with `cargo run -- --wallet-file-name=maker.teleport run-yield-generator` (note that you can omit the port number, the default port is 6102, specifying a different port number is only really needed for regtest where multiple makers are running on the same machine).
 
 * After a successful coinswap created with `do-coinswap`, the coins will still be in the wallet. You can send them out somewhere else using the command `direct-send` and providing the coin(s). For example `cargo run -- --wallet-file-name=taker.teleport direct-send sweep <destination-address> 9bfeec..0cc468:0`. Coins in the wallet can be found by running `wallet-balance` as above.
 
