@@ -214,11 +214,20 @@ Bob's coins ------> Bob coinswap address
                                           Alice with knowledge of the hash preimage
 ```
 
-If Alice attempts to take the coins from Bob's coinswap address using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address.
+If Alice attempts to take the coins from Bob's coinswap address using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address. This happens in the worst case, but in virtually all real-life situations it will never get to that point. The contracts usually always stay unbroadcasted.
 
-So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vis versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her possession. The same is true for Bob.
+So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vis versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her sole possession. The same is true for Bob.
 
-[Bitcoin's script](https://en.bitcoin.it/wiki/Script) is used to code these conditions. Diagrams of the transactions:
+```
+Alice's coins ----> Bob's address
+
+Bob's coins ----> Alice's address
+```
+
+In a successful coinswap, Alice's and Bob's coinswap addresses transform off-chain to be possessed by the other party
+
+
+[Bitcoin's script](https://en.bitcoin.it/wiki/Script) is used to code these timelock and hashlock conditions. Diagrams of the transactions:
 ```
 = Alice's funding transaction =
 Alice's inputs -----> multisig (Alice pubkey + Bob pubkey)
