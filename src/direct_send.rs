@@ -1,7 +1,7 @@
 use std::num::ParseIntError;
 use std::str::FromStr;
 
-use bitcoin::{Address, Amount, OutPoint, Script, Transaction, TxIn, TxOut};
+use bitcoin::{Address, Amount, Network, OutPoint, Script, Transaction, TxIn, TxOut};
 
 use bitcoincore_rpc::json::ListUnspentResultEntry;
 use bitcoincore_rpc::Client;
@@ -174,11 +174,18 @@ impl Wallet {
 
         let dest_addr = match destination {
             Destination::Wallet => self.get_next_external_address(rpc)?,
-            Destination::Address(a) => a,
+            Destination::Address(a) => {
+                //testnet and signet addresses have the same vbyte
+                //so a.network is always testnet even if the address is signet
+                let testnet_signet_type = (a.network == Network::Testnet
+                    || a.network == Network::Signet)
+                    && (NETWORK == Network::Testnet || NETWORK == Network::Signet);
+                if a.network != NETWORK && !testnet_signet_type {
+                    panic!("wrong address network type (e.g. mainnet, testnet, regtest, signet)");
+                }
+                a
+            }
         };
-        if dest_addr.network != NETWORK {
-            panic!("wrong address network type (e.g. testnet, regtest)");
-        }
         let miner_fee = 500 * fee_rate / 1000; //TODO this is just a rough estimate now
 
         let mut output = Vec::<TxOut>::new();
