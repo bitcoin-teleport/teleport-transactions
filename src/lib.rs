@@ -590,7 +590,12 @@ pub fn direct_send(
         .unwrap();
     let txhex = bitcoin::consensus::encode::serialize_hex(&tx);
     let test_mempool_accept_result = &rpc.test_mempool_accept(&[txhex.clone()]).unwrap()[0];
-    assert!(test_mempool_accept_result.allowed);
+    if !test_mempool_accept_result.allowed {
+        panic!(
+            "created invalid transaction, reason = {:#?}",
+            test_mempool_accept_result
+        );
+    }
     println!(
         "actual fee rate = {:.3} sat/vb",
         test_mempool_accept_result
