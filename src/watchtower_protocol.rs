@@ -88,35 +88,35 @@ pub enum WatchtowerToMakerMessage {
 //with {:?} to look nice for debugging
 #[derive(Debug)]
 struct ContractTransactionDisplay {
-    tx: Txid,
-    redeemscript: Address,
-    hashlock_spend_without_preimage: Option<Txid>,
-    timelock_spend: Option<Txid>,
+    _tx: Txid,
+    _redeemscript: Address,
+    _hashlock_spend_without_preimage: Option<Txid>,
+    _timelock_spend: Option<Txid>,
 }
 
 #[derive(Debug)]
 struct ContractsInfoDisplay {
-    contract_txes: Vec<ContractTransactionDisplay>,
-    wallet_label: String,
+    _contract_txes: Vec<ContractTransactionDisplay>,
+    _wallet_label: String,
 }
 
 impl ContractsInfoDisplay {
     fn from(contracts_info: &ContractsInfo) -> ContractsInfoDisplay {
         ContractsInfoDisplay {
-            contract_txes: contracts_info
+            _contract_txes: contracts_info
                 .contract_txes
                 .iter()
                 .map(|ctx| ContractTransactionDisplay {
-                    tx: ctx.tx.txid(),
-                    redeemscript: Address::p2wsh(&ctx.redeemscript, NETWORK),
-                    hashlock_spend_without_preimage: ctx
+                    _tx: ctx.tx.txid(),
+                    _redeemscript: Address::p2wsh(&ctx.redeemscript, NETWORK),
+                    _hashlock_spend_without_preimage: ctx
                         .hashlock_spend_without_preimage
                         .as_ref()
                         .map(|t| t.txid()),
-                    timelock_spend: ctx.timelock_spend.as_ref().map(|t| t.txid()),
+                    _timelock_spend: ctx.timelock_spend.as_ref().map(|t| t.txid()),
                 })
                 .collect::<Vec<ContractTransactionDisplay>>(),
-            wallet_label: contracts_info.wallet_label.clone(),
+            _wallet_label: contracts_info.wallet_label.clone(),
         }
     }
 }
