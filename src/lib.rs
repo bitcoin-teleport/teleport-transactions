@@ -17,12 +17,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Once, RwLock};
 
 use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
-use bitcoin::Amount;
+use bitcoin::{Amount, Network};
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
 pub mod wallet_sync;
-use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount};
+use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount, NETWORK};
 
 pub mod direct_send;
 use direct_send::{CoinToSpend, Destination, SendAmount};
@@ -61,7 +61,21 @@ pub fn get_bitcoin_rpc() -> Result<Client, Error> {
         format!("http://{}/wallet/{}", RPC_HOSTPORT, RPC_WALLET),
         auth,
     )?;
-    rpc.get_blockchain_info()?;
+    //TODO remove this network configuring entirely and just have teleport automatically
+    // detect it from the node
+    let network_chain = rpc.get_blockchain_info()?.chain;
+    let teleport_chain = match NETWORK {
+        Network::Bitcoin => "main",
+        Network::Testnet => "test",
+        Network::Signet => "signet",
+        Network::Regtest => "regtest",
+    };
+    if network_chain != teleport_chain {
+        panic!(
+            "Incorrectly configured network: connected bitcoin node chain = {}, our chain = {}",
+            network_chain, teleport_chain
+        );
+    }
     Ok(rpc)
 }
 
