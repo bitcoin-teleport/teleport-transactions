@@ -123,7 +123,7 @@ total balance = 0.14974828 BTC
 
 * This is done in pretty much the same way as on the regtest network. On public networks you don't always have to coinswap with yourself by creating and funding multiple wallets, instead you could coinswap with other users out there.
 
-* To switch between networks like regtest, signet, testnet or mainnet (for the brave), edit the constant `NETWORK` which is found at the top of the file `src/wallet_sync.rs`.
+* Teleport detects which network it's on by asking the Bitcoin node it's connected to via json-rpc. So to switch between networks like regtest, signet, testnet or mainnet (for the brave), make sure the RPC host and port are correct in `src/lib.rs`.
 
 * You will need Tor running on the same machine, then open the file `src/directory_servers.rs` and make sure the const `TOR_ADDR` has the correct Tor port.
 
