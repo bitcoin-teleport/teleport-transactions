@@ -1,4 +1,5 @@
 use bitcoin::util::amount::Amount;
+use bitcoin::Network;
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Client, RpcApi};
 
@@ -25,7 +26,9 @@ fn create_wallet_and_import(rpc: &Client, filename: PathBuf) -> Wallet {
 
     Wallet::save_new_wallet_file(&filename, mnemonic.to_string(), "".to_string()).unwrap();
 
-    let wallet = Wallet::load_wallet_from_file(filename, WalletSyncAddressAmount::Testing).unwrap();
+    let wallet =
+        Wallet::load_wallet_from_file(filename, Network::Regtest, WalletSyncAddressAmount::Testing)
+            .unwrap();
     // import intital addresses to core
     wallet
         .import_initial_addresses(
@@ -53,7 +56,8 @@ pub fn generate_1_block(rpc: &Client) {
 async fn test_standard_coinswap() {
     teleport::setup_logger();
 
-    let rpc = teleport::get_bitcoin_rpc().unwrap();
+    let (rpc, network) = teleport::get_bitcoin_rpc().unwrap();
+    assert_eq!(network, Network::Regtest);
 
     // unlock all utxos to avoid "insufficient fund" error
     rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
@@ -179,7 +183,7 @@ async fn test_standard_coinswap() {
 
     let taker_thread = thread::spawn(|| {
         // Wait and then start the taker
-        thread::sleep(time::Duration::from_secs(5));
+        thread::sleep(time::Duration::from_secs(20));
         teleport::run_taker(
             &PathBuf::from_str(TAKER).unwrap(),
             WalletSyncAddressAmount::Testing,
@@ -210,18 +214,22 @@ async fn test_standard_coinswap() {
 
     // Recreate the wallet
     let taker_wallet =
-        Wallet::load_wallet_from_file(&TAKER, WalletSyncAddressAmount::Testing).unwrap();
+        Wallet::load_wallet_from_file(&TAKER, Network::Regtest, WalletSyncAddressAmount::Testing)
+            .unwrap();
     let maker1_wallet =
-        Wallet::load_wallet_from_file(&MAKER1, WalletSyncAddressAmount::Testing).unwrap();
+        Wallet::load_wallet_from_file(&MAKER1, Network::Regtest, WalletSyncAddressAmount::Testing)
+            .unwrap();
     let maker2_wallet =
-        Wallet::load_wallet_from_file(&MAKER2, WalletSyncAddressAmount::Testing).unwrap();
+        Wallet::load_wallet_from_file(&MAKER2, Network::Regtest, WalletSyncAddressAmount::Testing)
+            .unwrap();
 
     // Check assertions
     assert_eq!(taker_wallet.get_swapcoins_count(), 6);
     assert_eq!(maker1_wallet.get_swapcoins_count(), 6);
     assert_eq!(maker2_wallet.get_swapcoins_count(), 6);
 
-    let rpc = teleport::get_bitcoin_rpc().unwrap();
+    let (rpc, network) = teleport::get_bitcoin_rpc().unwrap();
+    assert_eq!(network, Network::Regtest);
 
     let utxos = taker_wallet.list_unspent_from_wallet(&rpc, false).unwrap();
     let balance: Amount = utxos

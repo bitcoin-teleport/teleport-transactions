@@ -14,7 +14,7 @@ use tokio::time::sleep;
 use serde::{Deserialize, Serialize};
 
 use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
-use bitcoin::{Address, Script, Transaction, Txid};
+use bitcoin::{Address, Network, Script, Transaction, Txid};
 use bitcoincore_rpc::{
     json::{GetBlockResult, ListTransactionResult},
     Client, RpcApi,
@@ -25,7 +25,7 @@ use crate::contracts::{
     read_locktime_from_contract, read_timelock_pubkey_from_contract,
 };
 use crate::error::Error;
-use crate::wallet_sync::{import_redeemscript, NETWORK};
+use crate::wallet_sync::import_redeemscript;
 
 //TODO these two structs below are used for two different purposes
 //one purpose is as a message format for messages sent down the wire
@@ -108,7 +108,7 @@ impl ContractsInfoDisplay {
                 .iter()
                 .map(|ctx| ContractTransactionDisplay {
                     _tx: ctx.tx.txid(),
-                    _redeemscript: Address::p2wsh(&ctx.redeemscript, NETWORK),
+                    _redeemscript: Address::p2wsh(&ctx.redeemscript, Network::Regtest),
                     _hashlock_spend_without_preimage: ctx
                         .hashlock_spend_without_preimage
                         .as_ref()
@@ -122,14 +122,14 @@ impl ContractsInfoDisplay {
 }
 
 #[tokio::main]
-pub async fn start_watchtower(rpc: &Client, kill_flag: Arc<RwLock<bool>>) {
-    match run(rpc, kill_flag).await {
+pub async fn start_watchtower(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) {
+    match run(rpc, network, kill_flag).await {
         Ok(_o) => log::info!("watchtower ended without error"),
         Err(e) => log::info!("watchtower ended with err {:?}", e),
     };
 }
 
-async fn run(rpc: &Client, kill_flag: Arc<RwLock<bool>>) -> Result<(), Error> {
+async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Result<(), Error> {
     //TODO port number in config file
     let port = 6103;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
@@ -176,6 +176,7 @@ async fn run(rpc: &Client, kill_flag: Arc<RwLock<bool>>) -> Result<(), Error> {
             _ = sleep(Duration::from_secs(10)) => {
                 accepting_clients = run_contract_checks(
                     &rpc,
+                    network,
                     &mut coinswap_in_progress_contracts,
                     &mut last_checked_block_height,
                     &mut live_contracts,
@@ -298,6 +299,7 @@ async fn handle_message(
 
 fn run_contract_checks(
     rpc: &Client,
+    network: Network,
     coinswap_in_progress_contracts: &mut Vec<ContractsInfo>,
     last_checked_block_height: &mut Option<u64>,
     live_contracts: &mut Vec<ContractsInfo>,
@@ -324,7 +326,7 @@ fn run_contract_checks(
         last_checked_block_height,
     )?;
     if !broadcasted_contracts.is_empty() {
-        import_broadcasted_contract_redeemscripts(rpc, &broadcasted_contracts)?;
+        import_broadcasted_contract_redeemscripts(rpc, network, &broadcasted_contracts)?;
         //remove broadcasted_contracts from the vec coinswap_in_progress_contracts
         coinswap_in_progress_contracts.retain(|cipc| {
             broadcasted_contracts
@@ -454,6 +456,7 @@ pub fn check_for_broadcasted_contract_txes(
 
 fn import_broadcasted_contract_redeemscripts(
     rpc: &Client,
+    network: Network,
     broadcasted_contracts: &[ContractsInfo],
 ) -> Result<(), bitcoincore_rpc::Error> {
     log::debug!(
@@ -463,7 +466,7 @@ fn import_broadcasted_contract_redeemscripts(
             .map(|ci| ci
                 .contract_txes
                 .iter()
-                .map(|ctx| Address::p2wsh(&ctx.redeemscript, NETWORK))
+                .map(|ctx| Address::p2wsh(&ctx.redeemscript, network))
                 .collect::<Vec<Address>>())
             .collect::<Vec<Vec<Address>>>()
     );

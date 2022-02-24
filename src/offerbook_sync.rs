@@ -17,7 +17,6 @@ use crate::taker_protocol::{
     handshake_maker, read_message, send_message, FIRST_CONNECT_ATTEMPTS,
     FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
 };
-use crate::wallet_sync::NETWORK;
 
 #[derive(Debug, Clone)]
 pub enum MakerAddress {
@@ -151,14 +150,18 @@ pub async fn sync_offerbook_with_addresses(
     result
 }
 
-pub async fn get_advertised_maker_addresses() -> Result<Vec<MakerAddress>, DirectoryServerError> {
-    Ok(if NETWORK == Network::Regtest {
+pub async fn get_advertised_maker_addresses(
+    network: Network,
+) -> Result<Vec<MakerAddress>, DirectoryServerError> {
+    Ok(if network == Network::Regtest {
         get_regtest_maker_addresses()
     } else {
-        sync_maker_addresses_from_directory_servers(NETWORK).await?
+        sync_maker_addresses_from_directory_servers(network).await?
     })
 }
 
-pub async fn sync_offerbook() -> Result<Vec<OfferAndAddress>, DirectoryServerError> {
-    Ok(sync_offerbook_with_addresses(get_advertised_maker_addresses().await?).await)
+pub async fn sync_offerbook(
+    network: Network,
+) -> Result<Vec<OfferAndAddress>, DirectoryServerError> {
+    Ok(sync_offerbook_with_addresses(get_advertised_maker_addresses(network).await?).await)
 }

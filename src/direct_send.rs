@@ -8,7 +8,7 @@ use bitcoincore_rpc::Client;
 
 use crate::contracts::SwapCoin;
 use crate::error::Error;
-use crate::wallet_sync::{UTXOSpendInfo, Wallet, NETWORK};
+use crate::wallet_sync::{UTXOSpendInfo, Wallet};
 
 #[derive(Debug)]
 pub enum SendAmount {
@@ -179,8 +179,8 @@ impl Wallet {
                 //so a.network is always testnet even if the address is signet
                 let testnet_signet_type = (a.network == Network::Testnet
                     || a.network == Network::Signet)
-                    && (NETWORK == Network::Testnet || NETWORK == Network::Signet);
-                if a.network != NETWORK && !testnet_signet_type {
+                    && (self.network == Network::Testnet || self.network == Network::Signet);
+                if a.network != self.network && !testnet_signet_type {
                     panic!("wrong address network type (e.g. mainnet, testnet, regtest, signet)");
                 }
                 a

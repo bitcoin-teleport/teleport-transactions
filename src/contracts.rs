@@ -12,7 +12,7 @@ use bitcoin::{
     secp256k1::{Message, Secp256k1, SecretKey, Signature},
     util::bip143::SigHashCache,
     util::ecdsa::PublicKey,
-    Address, OutPoint, SigHashType, Transaction, TxIn, TxOut,
+    OutPoint, SigHashType, Transaction, TxIn, TxOut,
 };
 
 use bitcoincore_rpc::{Client, RpcApi};
@@ -23,7 +23,7 @@ use rand::RngCore;
 use crate::error::Error;
 use crate::messages::ConfirmedCoinSwapTxInfo;
 use crate::wallet_sync::{
-    create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet, NETWORK,
+    create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
 };
 
 //relatively simple handling of miner fees for now, each funding transaction is considered
@@ -77,6 +77,14 @@ pub fn calculate_coinswap_fee(
     absolute_fee_sat
         + (total_funding_amount * amount_relative_fee_ppb / 1_000_000_000)
         + (time_in_blocks * time_relative_fee_ppb / 1_000_000_000)
+}
+
+pub fn redeemscript_to_scriptpubkey(redeemscript: &Script) -> Script {
+    //p2wsh address
+    Script::new_witness_program(
+        bitcoin::bech32::u5::try_from_u8(0).unwrap(),
+        &redeemscript.wscript_hash().to_vec(),
+    )
 }
 
 pub fn calculate_maker_pubkey_from_nonce(
@@ -249,8 +257,6 @@ pub fn create_senders_contract_tx(
     input_value: u64,
     contract_redeemscript: &Script,
 ) -> Transaction {
-    let contract_address = Address::p2wsh(&contract_redeemscript, NETWORK);
-
     Transaction {
         input: vec![TxIn {
             previous_output: input,
@@ -259,7 +265,7 @@ pub fn create_senders_contract_tx(
             script_sig: Script::new(),
         }],
         output: vec![TxOut {
-            script_pubkey: contract_address.script_pubkey(),
+            script_pubkey: redeemscript_to_scriptpubkey(&contract_redeemscript),
             value: input_value - 1000,
         }],
         lock_time: 0,
@@ -291,8 +297,7 @@ fn is_contract_out_valid(
 
     let redeemscript_from_request =
         create_contract_redeemscript(hashlock_pubkey, timelock_pubkey, hashvalue, locktime);
-    let contract_spk_from_request =
-        Address::p2wsh(&redeemscript_from_request, NETWORK).script_pubkey();
+    let contract_spk_from_request = redeemscript_to_scriptpubkey(&redeemscript_from_request);
     if contract_output.script_pubkey != contract_spk_from_request {
         return Err(Error::Protocol(
             "given transaction does not pay to requested contract",
@@ -370,7 +375,7 @@ pub fn find_funding_output<'a>(
     funding_tx: &'a Transaction,
     multisig_redeemscript: &Script,
 ) -> Option<(u32, &'a TxOut)> {
-    let multisig_spk = Address::p2wsh(&multisig_redeemscript, NETWORK).script_pubkey();
+    let multisig_spk = redeemscript_to_scriptpubkey(&multisig_redeemscript);
     funding_tx
         .output
         .iter()
@@ -456,7 +461,7 @@ pub fn verify_proof_of_funding(
 
     //check that the provided contract matches the scriptpubkey from the
     //cache which was populated when the signsendercontracttx message arrived
-    let contract_spk = Address::p2wsh(&funding_info.contract_redeemscript, NETWORK).script_pubkey();
+    let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript);
 
     if !wallet.does_prevout_match_cached_contract(
         &OutPoint {
@@ -501,7 +506,7 @@ pub fn validate_contract_tx(
         return Err(Error::Protocol("not spending the funding outpoint"));
     }
     if receivers_contract_tx.output[0].script_pubkey
-        != Address::p2wsh(&contract_redeemscript, NETWORK).script_pubkey()
+        != redeemscript_to_scriptpubkey(&contract_redeemscript)
     {
         return Err(Error::Protocol("doesnt pay to requested contract"));
     }
@@ -911,8 +916,8 @@ mod test {
         let multisig_reedemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
         let another_script = Script::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
 
-        let multi_script_pubkey = Address::p2wsh(&multisig_reedemscript, NETWORK).script_pubkey();
-        let another_script_pubkey = Address::p2wsh(&another_script, NETWORK).script_pubkey();
+        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_reedemscript);
+        let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);
 
         // Create the funding transaction
         let funding_tx = Transaction {
@@ -1034,7 +1039,7 @@ mod test {
         // Change contract transaction to pay into wrong output
         let mut contract_tx_err2 = contract_tx.clone();
         let multisig_redeemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
-        let multi_script_pubkey = Address::p2wsh(&multisig_redeemscript, NETWORK).script_pubkey();
+        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
             value: 3000,
@@ -1065,7 +1070,7 @@ mod test {
         let funding_outpoint_script =
             crate::wallet_sync::create_multisig_redeemscript(&pub1, &pub2);
 
-        let funding_spk = Address::p2sh(&funding_outpoint_script, NETWORK).script_pubkey();
+        let funding_spk = redeemscript_to_scriptpubkey(&funding_outpoint_script);
 
         let funding_tx = Transaction {
             input: vec![TxIn {

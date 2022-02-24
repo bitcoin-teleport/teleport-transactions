@@ -41,7 +41,7 @@ use crate::messages::{
     SendersContractSig, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
     SignSendersContractTx, SwapCoinPrivateKey, TakerToMakerMessage,
 };
-use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin, NETWORK};
+use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin};
 use crate::watchtower_client::{ping_watchtowers, register_coinswap_with_watchtowers};
 use crate::watchtower_protocol::{ContractTransaction, ContractsInfo};
 
@@ -112,9 +112,9 @@ async fn run(
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
 
-    if NETWORK != Network::Regtest {
+    if wallet.read().unwrap().network != Network::Regtest {
         log::info!("Adding my address at the directory servers. . .");
-        post_maker_address_to_directory_servers(NETWORK, MAKER_ONION_ADDR)
+        post_maker_address_to_directory_servers(wallet.read().unwrap().network, MAKER_ONION_ADDR)
             .await
             .unwrap();
     }
@@ -171,12 +171,12 @@ async fn run(
                 let directory_servers_refresh_interval = Duration::from_secs(
                     config.directory_servers_refresh_interval_secs
                 );
-                if NETWORK != Network::Regtest
+                if wallet.read().unwrap().network != Network::Regtest
                         && Instant::now().saturating_duration_since(last_directory_servers_refresh)
                         > directory_servers_refresh_interval {
                     last_directory_servers_refresh = Instant::now();
                     let result_expiry_time = post_maker_address_to_directory_servers(
-                        NETWORK,
+                        wallet.read().unwrap().network,
                         MAKER_ONION_ADDR
                     ).await;
                     log::info!("Refreshing my address at the directory servers = {:?}",

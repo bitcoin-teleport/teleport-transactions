@@ -78,8 +78,16 @@ enum Subcommand {
         hashvalue: Hash160,
     },
 
-    /// Download all offers from all makers out there. Optionally download from one given maker
-    DownloadOffers { maker_address: Option<String> },
+    /// Download all offers from all makers out there. If bitcoin node not configured then
+    /// provide the network as an argument, can also optionally download from one given maker
+    DownloadOffers {
+        /// Network in question, options are "main", "test", "signet". Only used if configured
+        /// bitcoin node RPC is unreachable
+        network: Option<String>,
+        /// Optional single maker address to only download from. Useful if testing if your own
+        /// maker is reachable
+        maker_address: Option<String>,
+    },
 
     /// Send a transaction from the wallet
     DirectSend {
@@ -158,8 +166,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.dont_broadcast,
             );
         }
-        Subcommand::DownloadOffers { maker_address } => {
-            teleport::download_and_display_offers(maker_address);
+        Subcommand::DownloadOffers {
+            network,
+            maker_address,
+        } => {
+            teleport::download_and_display_offers(network, maker_address);
         }
         Subcommand::DirectSend {
             send_amount,

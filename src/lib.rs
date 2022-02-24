@@ -22,7 +22,7 @@ use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
 pub mod wallet_sync;
-use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount, NETWORK};
+use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount};
 
 pub mod direct_send;
 use direct_send::{CoinToSpend, Destination, SendAmount};
@@ -47,7 +47,17 @@ pub mod watchtower_protocol;
 
 static INIT: Once = Once::new();
 
-pub fn get_bitcoin_rpc() -> Result<Client, Error> {
+fn str_to_bitcoin_network(net_str: &str) -> Network {
+    match net_str {
+        "main" => Network::Bitcoin,
+        "test" => Network::Testnet,
+        "signet" => Network::Signet,
+        "regtest" => Network::Regtest,
+        _ => panic!("unknown network: {}", net_str),
+    }
+}
+
+pub fn get_bitcoin_rpc() -> Result<(Client, Network), Error> {
     let auth = match RPC_CREDENTIALS {
         Some((user, pass)) => Auth::UserPass(user.to_string(), pass.to_string()),
         None => {
@@ -61,22 +71,8 @@ pub fn get_bitcoin_rpc() -> Result<Client, Error> {
         format!("http://{}/wallet/{}", RPC_HOSTPORT, RPC_WALLET),
         auth,
     )?;
-    //TODO remove this network configuring entirely and just have teleport automatically
-    // detect it from the node
-    let network_chain = rpc.get_blockchain_info()?.chain;
-    let teleport_chain = match NETWORK {
-        Network::Bitcoin => "main",
-        Network::Testnet => "test",
-        Network::Signet => "signet",
-        Network::Regtest => "regtest",
-    };
-    if network_chain != teleport_chain {
-        panic!(
-            "Incorrectly configured network: connected bitcoin node chain = {}, our chain = {}",
-            network_chain, teleport_chain
-        );
-    }
-    Ok(rpc)
+    let network = str_to_bitcoin_network(rpc.get_blockchain_info()?.chain.as_str());
+    Ok((rpc, network))
 }
 
 /// Setup function that will only run once, even if called multiple times.
@@ -92,7 +88,7 @@ pub fn setup_logger() {
 }
 
 pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
@@ -109,8 +105,11 @@ pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     Wallet::save_new_wallet_file(&wallet_file_name, mnemonic.to_string(), extension.clone())
         .unwrap();
 
-    let w = match Wallet::load_wallet_from_file(&wallet_file_name, WalletSyncAddressAmount::Normal)
-    {
+    let w = match Wallet::load_wallet_from_file(
+        &wallet_file_name,
+        network,
+        WalletSyncAddressAmount::Normal,
+    ) {
         Ok(w) => w,
         Err(error) => panic!("error loading wallet file: {:?}", error),
     };
@@ -158,18 +157,21 @@ pub fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
 }
 
 pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool>) {
-    let mut wallet =
-        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
-            Ok(w) => w,
-            Err(error) => {
-                log::error!(target: "main", "error loading wallet file: {:?}", error);
-                return;
-            }
-        };
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet = match Wallet::load_wallet_from_file(
+        wallet_file_name,
+        network,
+        WalletSyncAddressAmount::Normal,
+    ) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
@@ -335,30 +337,36 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
 }
 
 pub fn display_wallet_keys(wallet_file_name: &PathBuf) {
-    let wallet =
-        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
-            Ok(w) => w,
-            Err(error) => {
-                log::error!(target: "main", "error loading wallet file: {:?}", error);
-                return;
-            }
-        };
+    let wallet = match Wallet::load_wallet_from_file(
+        wallet_file_name,
+        Network::Regtest,
+        WalletSyncAddressAmount::Normal,
+    ) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
+            return;
+        }
+    };
     wallet.print_wallet_key_data();
 }
 
 pub fn print_receive_invoice(wallet_file_name: &PathBuf) {
-    let mut wallet =
-        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
-            Ok(w) => w,
-            Err(error) => {
-                log::error!(target: "main", "error loading wallet file: {:?}", error);
-                return;
-            }
-        };
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet = match Wallet::load_wallet_from_file(
+        wallet_file_name,
+        network,
+        WalletSyncAddressAmount::Normal,
+    ) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
@@ -381,14 +389,14 @@ pub fn run_maker(
     maker_behavior: MakerBehavior,
     kill_flag: Option<Arc<RwLock<bool>>>,
 ) {
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
-    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name, sync_amount) {
+    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name, network, sync_amount) {
         Ok(w) => w,
         Err(error) => {
             log::error!(target: "main", "error loading wallet file: {:?}", error);
@@ -423,14 +431,14 @@ pub fn run_taker(
     maker_count: u16,
     tx_count: u32,
 ) {
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
-    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name, sync_amount) {
+    let mut wallet = match Wallet::load_wallet_from_file(wallet_file_name, network, sync_amount) {
         Ok(w) => w,
         Err(error) => {
             log::error!(target: "main", "error loading wallet file: {:?}", error);
@@ -456,18 +464,21 @@ pub fn recover_from_incomplete_coinswap(
     hashvalue: Hash160,
     dont_broadcast: bool,
 ) {
-    let mut wallet =
-        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
-            Ok(w) => w,
-            Err(error) => {
-                log::error!(target: "main", "error loading wallet file: {:?}", error);
-                return;
-            }
-        };
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet = match Wallet::load_wallet_from_file(
+        wallet_file_name,
+        network,
+        WalletSyncAddressAmount::Normal,
+    ) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
             return;
         }
     };
@@ -520,13 +531,29 @@ pub fn recover_from_incomplete_coinswap(
 }
 
 #[tokio::main]
-pub async fn download_and_display_offers(maker_address: Option<String>) {
+pub async fn download_and_display_offers(
+    network_str: Option<String>,
+    maker_address: Option<String>,
+) {
     let maker_addresses = if let Some(maker_addr) = maker_address {
         vec![MakerAddress::Tor {
             address: maker_addr,
         }]
     } else {
-        get_advertised_maker_addresses()
+        let network = match get_bitcoin_rpc() {
+            Ok((_rpc, network)) => network,
+            Err(error) => {
+                if let Some(net_str) = network_str {
+                    str_to_bitcoin_network(net_str.as_str())
+                } else {
+                    panic!(
+                        "network string not provided, and error connecting to bitcoin node: {:?}",
+                        error
+                    );
+                }
+            }
+        };
+        get_advertised_maker_addresses(network)
             .await
             .expect("unable to sync maker addresses from directory servers")
     };
@@ -583,21 +610,24 @@ pub fn direct_send(
     coins_to_spend: &[CoinToSpend],
     dont_broadcast: bool,
 ) {
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
             return;
         }
     };
-    let mut wallet =
-        match Wallet::load_wallet_from_file(wallet_file_name, WalletSyncAddressAmount::Normal) {
-            Ok(w) => w,
-            Err(error) => {
-                log::error!(target: "main", "error loading wallet file: {:?}", error);
-                return;
-            }
-        };
+    let mut wallet = match Wallet::load_wallet_from_file(
+        wallet_file_name,
+        network,
+        WalletSyncAddressAmount::Normal,
+    ) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
+            return;
+        }
+    };
     wallet.startup_sync(&rpc).unwrap();
     let tx = wallet
         .create_direct_send(&rpc, fee_rate, send_amount, destination, coins_to_spend)
@@ -629,7 +659,7 @@ pub fn direct_send(
 }
 
 pub fn run_watchtower(kill_flag: Option<Arc<RwLock<bool>>>) {
-    let rpc = match get_bitcoin_rpc() {
+    let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
             log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
@@ -639,6 +669,7 @@ pub fn run_watchtower(kill_flag: Option<Arc<RwLock<bool>>>) {
 
     watchtower_protocol::start_watchtower(
         &rpc,
+        network,
         if kill_flag.is_none() {
             Arc::new(RwLock::new(false))
         } else {

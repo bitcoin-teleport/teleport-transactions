@@ -1,10 +1,3 @@
-//TODO this goes in the config file
-pub const NETWORK: Network = Network::Regtest;
-//other options: Network::Signet, Network::Bitcoin, Network::Testnet
-//Signet is probably the best for this early stage of the project if
-// you want to coinswap with other people
-//Mainnet/Bitcoin only for the brave
-
 // this file contains code handling the wallet and sync'ing the wallet
 // for now the wallet is only sync'd via bitcoin core's RPC
 // makers will only ever sync this way, but one day takers may sync in other
@@ -81,6 +74,7 @@ struct WalletFileData {
 }
 
 pub struct Wallet {
+    pub network: Network,
     master_key: ExtendedPrivKey,
     wallet_file_name: String,
     external_index: u32,
@@ -450,10 +444,10 @@ impl Wallet {
         );
 
         for (multisig_redeemscript, swapcoin) in &self.incoming_swapcoins {
-            Self::print_script_and_coin(multisig_redeemscript, swapcoin);
+            Self::print_script_and_coin(multisig_redeemscript, swapcoin, self.network);
         }
         for (multisig_redeemscript, swapcoin) in &self.outgoing_swapcoins {
-            Self::print_script_and_coin(multisig_redeemscript, swapcoin);
+            Self::print_script_and_coin(multisig_redeemscript, swapcoin, self.network);
         }
         println!(
             "swapcoin count = {}",
@@ -461,11 +455,11 @@ impl Wallet {
         );
     }
 
-    fn print_script_and_coin(script: &Script, coin: &dyn SwapCoin) {
+    fn print_script_and_coin(script: &Script, coin: &dyn SwapCoin, network: Network) {
         let contract_tx = coin.get_contract_tx();
         println!(
             "{} {}:{} {}",
-            Address::p2wsh(script, NETWORK),
+            Address::p2wsh(script, network),
             contract_tx.input[0].previous_output.txid,
             contract_tx.input[0].previous_output.vout,
             if coin.is_hash_preimage_known() {
@@ -508,6 +502,7 @@ impl Wallet {
 
     pub fn load_wallet_from_file<P: AsRef<Path>>(
         wallet_file_name: P,
+        network: Network,
         sync_amount: WalletSyncAddressAmount,
     ) -> Result<Wallet, Error> {
         let wallet_file_name = wallet_file_name
@@ -527,7 +522,7 @@ impl Wallet {
         let seed = mnemonic_ret
             .unwrap()
             .to_seed(Some(&wallet_file_data.extension));
-        let xprv = ExtendedPrivKey::new_master(NETWORK, &seed.0).unwrap();
+        let xprv = ExtendedPrivKey::new_master(network, &seed.0).unwrap();
 
         log::debug!(target: "wallet",
             "loaded wallet file, external_index={} incoming_swapcoins={} outgoing_swapcoins={}",
@@ -535,6 +530,7 @@ impl Wallet {
             wallet_file_data.incoming_swapcoins.len(), wallet_file_data.outgoing_swapcoins.len());
 
         let wallet = Wallet {
+            network,
             master_key: xprv,
             wallet_file_name,
             external_index: wallet_file_data.external_index,
@@ -861,7 +857,7 @@ impl Wallet {
             .values()
             .map(|osc| {
                 (
-                    Address::p2wsh(&osc.contract_redeemscript, NETWORK).script_pubkey(),
+                    contracts::redeemscript_to_scriptpubkey(&osc.contract_redeemscript),
                     osc,
                 )
             })
@@ -875,7 +871,7 @@ impl Wallet {
             .values()
             .map(|isc| {
                 (
-                    Address::p2wsh(&isc.contract_redeemscript, NETWORK).script_pubkey(),
+                    contracts::redeemscript_to_scriptpubkey(&isc.contract_redeemscript),
                     isc,
                 )
             })
@@ -1653,7 +1649,7 @@ pub fn import_redeemscript(
     redeemscript: &Script,
     address_label: &String,
 ) -> Result<(), bitcoincore_rpc::Error> {
-    let spk = Address::p2wsh(&redeemscript, NETWORK).script_pubkey();
+    let spk = contracts::redeemscript_to_scriptpubkey(&redeemscript);
     let result = rpc.import_multi(
         &[ImportMultiRequest {
             timestamp: ImportMultiRescanSince::Now,

@@ -92,7 +92,7 @@ pub async fn start_taker(rpc: &Client, wallet: &mut Wallet, config: TakerConfig)
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) -> Result<(), Error> {
-    let offers_addresses = sync_offerbook()
+    let offers_addresses = sync_offerbook(wallet.network)
         .await
         .expect("unable to sync maker addresses from directory servers");
     log::info!("<=== Got Offers");
