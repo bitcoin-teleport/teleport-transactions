@@ -597,7 +597,7 @@ pub async fn download_and_display_offers(
                 o.minimum_locktime
             );
         } else {
-            println!("{:<3} {:<70} UNREACHABLE", ii, address);
+            println!("{:<3} {:<70} UNREACHABLE", ii, address_str);
         }
     }
 }
