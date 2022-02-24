@@ -113,7 +113,10 @@ async fn run(
     ping_watchtowers().await?;
 
     if wallet.read().unwrap().network != Network::Regtest {
-        log::info!("Adding my address ({}) to the directory servers. . .", MAKER_ONION_ADDR);
+        log::info!(
+            "Adding my address ({}) to the directory servers. . .",
+            MAKER_ONION_ADDR
+        );
         post_maker_address_to_directory_servers(wallet.read().unwrap().network, MAKER_ONION_ADDR)
             .await
             .expect("unable to add my address to the directory servers, is tor reachable?");
