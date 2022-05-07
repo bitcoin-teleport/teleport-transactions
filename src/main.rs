@@ -7,6 +7,7 @@ use structopt::StructOpt;
 
 use teleport;
 use teleport::direct_send::{CoinToSpend, Destination, SendAmount};
+use teleport::fidelity_bonds::YearAndMonth;
 use teleport::maker_protocol::MakerBehavior;
 use teleport::wallet_sync::WalletSyncAddressAmount;
 use teleport::watchtower_protocol::{ContractTransaction, ContractsInfo};
@@ -59,6 +60,12 @@ enum Subcommand {
         port: Option<u16>,
         /// Special behavior used for testing e.g. "closeonsignsenderscontracttx"
         special_behavior: Option<String>,
+    },
+
+    /// Prints a fidelity bond timelocked address
+    GetFidelityBondAddress {
+        /// Locktime value of timelocked address as yyyy-mm year and month, for example "2025-03"
+        year_and_month: YearAndMonth,
     },
 
     /// Runs Taker.
@@ -144,6 +151,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 maker_special_behavior,
                 None,
             );
+        }
+        Subcommand::GetFidelityBondAddress { year_and_month } => {
+            teleport::print_fidelity_bond_address(&args.wallet_file_name, &year_and_month);
         }
         Subcommand::DoCoinswap {
             send_amount,

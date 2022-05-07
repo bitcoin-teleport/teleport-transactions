@@ -23,6 +23,7 @@ structopt = "0.3.21"
 dirs = "3.0.1"
 tokio-socks = "0.5"
 reqwest = { version = "0.11", features = ["socks"] }
+chrono = "0.4"
 
 #Empty default feature set, (helpful to generalise in github actions)
 [features]

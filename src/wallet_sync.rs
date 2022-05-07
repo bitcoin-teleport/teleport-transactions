@@ -51,6 +51,7 @@ use rand::RngCore;
 use crate::contracts;
 use crate::contracts::SwapCoin;
 use crate::error::Error;
+use crate::fidelity_bonds;
 use crate::messages::Preimage;
 
 //these subroutines are coded so that as much as possible they keep all their
@@ -75,13 +76,14 @@ struct WalletFileData {
 
 pub struct Wallet {
     pub network: Network,
-    master_key: ExtendedPrivKey,
+    pub master_key: ExtendedPrivKey,
     wallet_file_name: String,
     external_index: u32,
     initial_address_import_count: usize,
     incoming_swapcoins: HashMap<Script, IncomingSwapCoin>,
     outgoing_swapcoins: HashMap<Script, OutgoingSwapCoin>,
     offer_maxsize_cache: u64,
+    timelocked_script_index_map: HashMap<Script, u32>,
 }
 
 pub enum WalletSyncAddressAmount {
@@ -108,6 +110,10 @@ pub enum UTXOSpendInfo {
     },
     HashlockContract {
         swapcoin_multisig_redeemscript: Script,
+        input_value: u64,
+    },
+    FidelityBondCoin {
+        index: u32,
         input_value: u64,
     },
 }
@@ -549,6 +555,7 @@ impl Wallet {
                 .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
                 .collect::<HashMap<Script, OutgoingSwapCoin>>(),
             offer_maxsize_cache: 0,
+            timelocked_script_index_map: fidelity_bonds::generate_all_timelocked_addresses(&xprv),
         };
         Ok(wallet)
     }
@@ -750,6 +757,17 @@ impl Wallet {
                         ..Default::default()
                     }),
             )
+            .chain(
+                self.timelocked_script_index_map
+                    .keys()
+                    .map(|spk| ImportMultiRequest {
+                        timestamp: ImportMultiRescanSince::Now,
+                        script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
+                        watchonly: Some(true),
+                        label: Some(&address_label),
+                        ..Default::default()
+                    }),
+            )
             .collect::<Vec<ImportMultiRequest>>();
 
         let result = rpc.import_multi(
@@ -802,7 +820,37 @@ impl Wallet {
                 .filter(|d| !self.is_swapcoin_descriptor_imported(rpc, &d)),
         );
 
-        if hd_descriptors_to_import.is_empty() && swapcoin_descriptors_to_import.is_empty() {
+        //get first and last timelocked script, check if both are imported
+        let first_timelocked_addr = Address::p2wsh(
+            &self.get_timelocked_redeemscript_from_index(0),
+            self.network,
+        );
+        let last_timelocked_addr = Address::p2wsh(
+            &self.get_timelocked_redeemscript_from_index(
+                fidelity_bonds::TIMELOCKED_ADDRESS_COUNT - 1,
+            ),
+            self.network,
+        );
+        log::debug!(target: "wallet", "first_timelocked_addr={} last_timelocked_addr={}",
+            first_timelocked_addr, last_timelocked_addr);
+        let is_timelock_branch_imported = rpc
+            .get_address_info(&first_timelocked_addr)?
+            .is_watchonly
+            .unwrap_or(false)
+            && rpc
+                .get_address_info(&last_timelocked_addr)?
+                .is_watchonly
+                .unwrap_or(false);
+
+        log::debug!(target: "wallet",
+            concat!("hd_descriptors_to_import.len = {} swapcoin_descriptors_to_import.len = {}",
+                " is_timelock_branch_imported = {}"),
+            hd_descriptors_to_import.len(), swapcoin_descriptors_to_import.len(),
+            is_timelock_branch_imported);
+        if hd_descriptors_to_import.is_empty()
+            && swapcoin_descriptors_to_import.is_empty()
+            && is_timelock_branch_imported
+        {
             return Ok(());
         }
 
@@ -822,6 +870,11 @@ impl Wallet {
                 "range": self.initial_address_import_count-1})
             })
             .chain(swapcoin_descriptors_to_import.iter().map(|d| json!(d)))
+            .chain(
+                self.timelocked_script_index_map
+                    .keys()
+                    .map(|spk| json!({ "desc": format!("raw({:x})", spk) })),
+            )
             .collect::<Vec<Value>>();
 
         let scantxoutset_result: Value =
@@ -829,11 +882,28 @@ impl Wallet {
         if !scantxoutset_result["success"].as_bool().unwrap() {
             return Err(Error::Rpc(bitcoincore_rpc::Error::UnexpectedStructure));
         }
-        for unspent in scantxoutset_result["unspents"].as_array().unwrap() {
+        log::info!(target: "wallet", "TxOut set scan complete, found {} btc",
+            Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(&scantxoutset_result["total_amount"])),
+        );
+        let unspent_list = scantxoutset_result["unspents"].as_array().unwrap();
+        log::debug!(target: "wallet", "scantxoutset found_coins={} txouts={} height={} bestblock={}",
+            unspent_list.len(),
+            scantxoutset_result["txouts"].as_u64().unwrap(),
+            scantxoutset_result["height"].as_u64().unwrap(),
+            scantxoutset_result["bestblock"].as_str().unwrap(),
+        );
+        for unspent in unspent_list {
             let blockhash = rpc.get_block_hash(unspent["height"].as_u64().unwrap())?;
             let txid = Txid::from_hex(unspent["txid"].as_str().unwrap()).unwrap();
             let rawtx = rpc.get_raw_transaction_hex(&txid, Some(&blockhash));
             if let Ok(rawtx_hex) = rawtx {
+                log::debug!(target: "wallet", "found coin {}:{} {} height={} {}",
+                    txid,
+                    unspent["vout"].as_u64().unwrap(),
+                    Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(&unspent["amount"])),
+                    unspent["height"].as_u64().unwrap(),
+                    unspent["desc"].as_str().unwrap(),
+                );
                 let merkleproof = rpc.get_tx_out_proof(&[txid], Some(&blockhash))?.to_hex();
                 rpc.call(
                     "importprunedfunds",
@@ -885,7 +955,17 @@ impl Wallet {
         option_contract_scriptpubkeys_incoming_swapcoins: Option<
             &HashMap<Script, &IncomingSwapCoin>,
         >,
+        include_all_fidelity_bonds: bool,
     ) -> Option<UTXOSpendInfo> {
+        if include_all_fidelity_bonds {
+            if let Some(index) = self.timelocked_script_index_map.get(&u.script_pub_key) {
+                return Some(UTXOSpendInfo::FidelityBondCoin {
+                    index: *index,
+                    input_value: u.amount.as_sat(),
+                });
+            }
+        }
+
         if u.descriptor.is_none() {
             if let Some(swapcoin) = contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key)
             {
@@ -971,6 +1051,7 @@ impl Wallet {
                     u,
                     &contract_scriptpubkeys_outgoing_swapcoins,
                     None,
+                    false,
                 )
                 .is_none()
             })
@@ -987,6 +1068,7 @@ impl Wallet {
         &self,
         rpc: &Client,
         include_hashlocked: bool,
+        include_fidelity_bonds: bool,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, Error> {
         let contract_scriptpubkeys_outgoing_swapcoins =
             self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
@@ -1008,6 +1090,7 @@ impl Wallet {
                         } else {
                             None
                         },
+                        include_fidelity_bonds,
                     ),
                 )
             })
@@ -1140,7 +1223,7 @@ impl Wallet {
     fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> Result<u32, Error> {
         let mut max_index: i32 = -1;
         //TODO error handling
-        let utxos = self.list_unspent_from_wallet(rpc, false)?;
+        let utxos = self.list_unspent_from_wallet(rpc, false, false)?;
         for (utxo, _) in utxos {
             if utxo.descriptor.is_none() {
                 continue;
@@ -1184,7 +1267,7 @@ impl Wallet {
     }
 
     pub fn refresh_offer_maxsize_cache(&mut self, rpc: Arc<Client>) -> Result<(), Error> {
-        let utxos = self.list_unspent_from_wallet(&rpc, false)?;
+        let utxos = self.list_unspent_from_wallet(&rpc, false, false)?;
         let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
         self.offer_maxsize_cache = balance.as_sat();
         Ok(())
@@ -1268,6 +1351,12 @@ impl Wallet {
                     .find_incoming_swapcoin(&swapcoin_multisig_redeemscript)
                     .unwrap()
                     .sign_hashlocked_transaction_input(ix, &tx_clone, &mut input, input_value),
+                UTXOSpendInfo::FidelityBondCoin {
+                    index: _,
+                    input_value: _,
+                } => {
+                    panic!("not implemented yet");
+                }
             }
         }
     }

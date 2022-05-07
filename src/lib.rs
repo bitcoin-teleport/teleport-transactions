@@ -11,18 +11,21 @@ extern crate bitcoincore_rpc;
 
 use dirs::home_dir;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::io;
 use std::iter::repeat;
 use std::path::PathBuf;
 use std::sync::{Arc, Once, RwLock};
 
 use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
-use bitcoin::{Amount, Network};
+use bitcoin::{Address, Amount, Network};
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
+use chrono::NaiveDateTime;
+
 pub mod wallet_sync;
-use wallet_sync::{Wallet, WalletSwapCoin, WalletSyncAddressAmount};
+use wallet_sync::{UTXOSpendInfo, Wallet, WalletSwapCoin, WalletSyncAddressAmount};
 
 pub mod direct_send;
 use direct_send::{CoinToSpend, Destination, SendAmount};
@@ -38,6 +41,11 @@ use taker_protocol::TakerConfig;
 
 pub mod offerbook_sync;
 use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress};
+
+pub mod fidelity_bonds;
+use fidelity_bonds::{
+    get_locktime_from_index, read_locktime_from_timelocked_redeemscript, YearAndMonth,
+};
 
 pub mod directory_servers;
 pub mod error;
@@ -179,7 +187,19 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
 
     let long_form = long_form.unwrap_or(false);
 
-    let mut utxos = wallet.list_unspent_from_wallet(&rpc, false).unwrap();
+    let utxos_incl_fbonds = wallet.list_unspent_from_wallet(&rpc, false, true).unwrap();
+    let (mut utxos, mut fidelity_bond_utxos): (Vec<_>, Vec<_>) =
+        utxos_incl_fbonds.iter().partition(|(_, usi)| {
+            if let UTXOSpendInfo::FidelityBondCoin {
+                index: _,
+                input_value: _,
+            } = usi
+            {
+                false
+            } else {
+                true
+            }
+        });
     utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
     let utxo_count = utxos.len();
     let balance: Amount = utxos
@@ -192,7 +212,7 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
     );
     for (utxo, _) in utxos {
         let txid = utxo.txid.to_hex();
-        let addr = utxo.address.unwrap().to_string();
+        let addr = utxo.address.as_ref().unwrap().to_string();
         #[rustfmt::skip]
         println!(
             "{}{}{}:{} {}{}{} {:^8} {:<7} {}",
@@ -334,6 +354,47 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
             );
         }
     }
+
+    if fidelity_bond_utxos.len() > 0 {
+        println!("= fidelity bond coins =");
+        println!(
+            "{:16} {:24} {:<7} {:<11} {:<8} {:6}",
+            "coin", "address", "conf", "locktime", "locked?", "value"
+        );
+        let mediantime = rpc.get_blockchain_info().unwrap().median_time;
+        fidelity_bond_utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
+        for (utxo, utxo_spend_info) in fidelity_bond_utxos {
+            let index = if let UTXOSpendInfo::FidelityBondCoin {
+                index,
+                input_value: _,
+            } = utxo_spend_info
+            {
+                index
+            } else {
+                panic!("logic error, all these utxos should be fidelity bonds");
+            };
+            let unix_locktime = get_locktime_from_index(*index);
+            let txid = utxo.txid.to_hex();
+            let addr = utxo.address.as_ref().unwrap().to_string();
+            #[rustfmt::skip]
+            println!(
+                "{}{}{}:{} {}{}{} {:<7} {:<11} {:<8} {:6}",
+                if long_form { &txid } else {&txid[0..6] },
+                if long_form { "" } else { ".." },
+                if long_form { &"" } else { &txid[58..64] },
+                utxo.vout,
+                if long_form { &addr } else { &addr[0..10] },
+                if long_form { "" } else { "...." },
+                if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
+                utxo.confirmations,
+                NaiveDateTime::from_timestamp(unix_locktime, 0)
+                    .format("%Y-%m-%d")
+                    .to_string(),
+                if mediantime >= unix_locktime.try_into().unwrap() { "unlocked" } else { "locked" },
+                utxo.amount
+            );
+        }
+    }
 }
 
 pub fn display_wallet_keys(wallet_file_name: &PathBuf) {
@@ -379,6 +440,52 @@ pub fn print_receive_invoice(wallet_file_name: &PathBuf) {
             return;
         }
     };
+    println!("{}", addr);
+}
+
+pub fn print_fidelity_bond_address(wallet_file_name: &PathBuf, locktime: &YearAndMonth) {
+    let (rpc, network) = match get_bitcoin_rpc() {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            log::error!(target: "main", "error connecting to bitcoin node: {:?}", error);
+            return;
+        }
+    };
+    let mut wallet = match Wallet::load_wallet_from_file(
+        wallet_file_name,
+        network,
+        WalletSyncAddressAmount::Normal,
+    ) {
+        Ok(w) => w,
+        Err(error) => {
+            log::error!(target: "main", "error loading wallet file: {:?}", error);
+            return;
+        }
+    };
+    wallet.startup_sync(&rpc).unwrap();
+
+    let redeemscript = wallet.get_timelocked_redeemscript_from_index(locktime.to_index());
+    let addr = Address::p2wsh(&redeemscript, wallet.network);
+    let unix_locktime = read_locktime_from_timelocked_redeemscript(&redeemscript)
+        .expect("bug: unable to read locktime");
+
+    println!(concat!(
+        "WARNING: You should send coins to this address only once.",
+        " Only single biggest value UTXO will be announced as a fidelity bond.",
+        " Sending coins to this address multiple times will not increase",
+        " fidelity bond value."
+    ));
+    println!(concat!(
+        "WARNING: Only send coins here which are from coinjoins, coinswaps or",
+        " otherwise not linked to your identity. Also, use a sweep transaction when funding the",
+        " timelocked address, i.e. Don't create a change address."
+    ));
+    println!(
+        "Coins sent to this address will not be spendable until {}",
+        NaiveDateTime::from_timestamp(unix_locktime, 0)
+            .format("%Y-%m-%d")
+            .to_string()
+    );
     println!("{}", addr);
 }
 

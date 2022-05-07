@@ -109,7 +109,7 @@ impl Wallet {
         let mut tx_inputs = Vec::<TxIn>::new();
         let mut unspent_inputs = Vec::<(ListUnspentResultEntry, UTXOSpendInfo)>::new();
         //TODO this search within a search could get very slow
-        let list_unspent_result = self.list_unspent_from_wallet(rpc, true)?;
+        let list_unspent_result = self.list_unspent_from_wallet(rpc, true, true)?;
         for (list_unspent_entry, spend_info) in list_unspent_result {
             for cts in coins_to_spend {
                 let previous_output = match cts {

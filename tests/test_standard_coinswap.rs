@@ -127,21 +127,21 @@ async fn test_standard_coinswap() {
 
     assert_eq!(
         taker_wallet
-            .list_unspent_from_wallet(&rpc, false)
+            .list_unspent_from_wallet(&rpc, false, false)
             .unwrap()
             .len(),
         3
     );
     assert_eq!(
         maker1_wallet
-            .list_unspent_from_wallet(&rpc, false)
+            .list_unspent_from_wallet(&rpc, false, false)
             .unwrap()
             .len(),
         3
     );
     assert_eq!(
         maker2_wallet
-            .list_unspent_from_wallet(&rpc, false)
+            .list_unspent_from_wallet(&rpc, false, false)
             .unwrap()
             .len(),
         3
@@ -231,21 +231,27 @@ async fn test_standard_coinswap() {
     let (rpc, network) = teleport::get_bitcoin_rpc().unwrap();
     assert_eq!(network, Network::Regtest);
 
-    let utxos = taker_wallet.list_unspent_from_wallet(&rpc, false).unwrap();
+    let utxos = taker_wallet
+        .list_unspent_from_wallet(&rpc, false, false)
+        .unwrap();
     let balance: Amount = utxos
         .iter()
         .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
     assert_eq!(utxos.len(), 6);
     assert!(balance < Amount::from_btc(0.15).unwrap());
 
-    let utxos = maker1_wallet.list_unspent_from_wallet(&rpc, false).unwrap();
+    let utxos = maker1_wallet
+        .list_unspent_from_wallet(&rpc, false, false)
+        .unwrap();
     let balance: Amount = utxos
         .iter()
         .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
     assert_eq!(utxos.len(), 6);
     assert!(balance > Amount::from_btc(0.15).unwrap());
 
-    let utxos = maker2_wallet.list_unspent_from_wallet(&rpc, false).unwrap();
+    let utxos = maker2_wallet
+        .list_unspent_from_wallet(&rpc, false, false)
+        .unwrap();
     let balance: Amount = utxos
         .iter()
         .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
