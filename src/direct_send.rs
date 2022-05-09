@@ -8,6 +8,7 @@ use bitcoincore_rpc::Client;
 
 use crate::contracts::SwapCoin;
 use crate::error::Error;
+use crate::fidelity_bonds::get_locktime_from_index;
 use crate::wallet_sync::{UTXOSpendInfo, Wallet};
 
 #[derive(Debug)]
@@ -207,10 +208,26 @@ impl Wallet {
             });
         }
 
+        let lock_time = unspent_inputs
+            .iter()
+            .map(|(_, spend_info)| {
+                if let UTXOSpendInfo::FidelityBondCoin {
+                    index,
+                    input_value: _,
+                } = spend_info
+                {
+                    get_locktime_from_index(*index) as u32 + 1
+                } else {
+                    0 //TODO add anti-fee-sniping here
+                }
+            })
+            .max()
+            .unwrap();
+
         let mut tx = Transaction {
             input: tx_inputs,
             output,
-            lock_time: 0,
+            lock_time,
             version: 2,
         };
         self.sign_transaction(

@@ -1351,11 +1351,22 @@ impl Wallet {
                     .find_incoming_swapcoin(&swapcoin_multisig_redeemscript)
                     .unwrap()
                     .sign_hashlocked_transaction_input(ix, &tx_clone, &mut input, input_value),
-                UTXOSpendInfo::FidelityBondCoin {
-                    index: _,
-                    input_value: _,
-                } => {
-                    panic!("not implemented yet");
+                UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
+                    let privkey = self.get_timelocked_privkey_from_index(index);
+                    let redeemscript = self.get_timelocked_redeemscript_from_index(index);
+                    let sighash = SigHashCache::new(&tx_clone).signature_hash(
+                        ix,
+                        &redeemscript,
+                        input_value,
+                        SigHashType::All,
+                    );
+                    let sig = secp.sign(
+                        &secp256k1::Message::from_slice(&sighash[..]).unwrap(),
+                        &privkey.key,
+                    );
+                    input.witness.push(sig.serialize_der().to_vec());
+                    input.witness[0].push(SigHashType::All as u8);
+                    input.witness.push(redeemscript.as_bytes().to_vec());
                 }
             }
         }
