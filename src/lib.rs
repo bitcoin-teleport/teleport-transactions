@@ -45,6 +45,7 @@ use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_address
 pub mod fidelity_bonds;
 use fidelity_bonds::{
     get_locktime_from_index, read_locktime_from_timelocked_redeemscript, YearAndMonth,
+    REGTEST_DUMMY_ONION_HOSTNAME,
 };
 
 pub mod directory_servers;
@@ -361,6 +362,7 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
             "{:16} {:24} {:<7} {:<11} {:<8} {:6}",
             "coin", "address", "conf", "locktime", "locked?", "value"
         );
+
         let mediantime = rpc.get_blockchain_info().unwrap().median_time;
         fidelity_bond_utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
         for (utxo, utxo_spend_info) in fidelity_bond_utxos {
@@ -642,13 +644,18 @@ pub async fn download_and_display_offers(
     network_str: Option<String>,
     maker_address: Option<String>,
 ) {
+    let mut rpc_network: Option<(Client, Network)> = None;
+
     let maker_addresses = if let Some(maker_addr) = maker_address {
         vec![MakerAddress::Tor {
             address: maker_addr,
         }]
     } else {
         let network = match get_bitcoin_rpc() {
-            Ok((_rpc, network)) => network,
+            Ok((rpc, network)) => {
+                rpc_network = Some((rpc, network));
+                network
+            }
             Err(error) => {
                 if let Some(net_str) = network_str {
                     str_to_bitcoin_network(net_str.as_str())
@@ -675,7 +682,7 @@ pub async fn download_and_display_offers(
     }
 
     println!(
-        "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12}",
+        "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12} {:<19}",
         "n",
         "maker address",
         "max size",
@@ -683,8 +690,18 @@ pub async fn download_and_display_offers(
         "abs fee",
         "amt rel fee",
         "time rel fee",
-        "minlocktime"
+        "minlocktime",
+        "fidelity bond value",
     );
+    let block_count = rpc_network
+        .as_ref()
+        .map(|(rpc, _)| rpc.get_block_count().unwrap())
+        .unwrap_or(0);
+    let median_time = rpc_network
+        .as_ref()
+        .map(|(rpc, _)| rpc.get_blockchain_info().unwrap().median_time)
+        .unwrap_or(0);
+
     for (ii, address) in maker_addresses.iter().enumerate() {
         let address_str = match &address {
             MakerAddress::Clearnet { address } => address,
@@ -692,8 +709,28 @@ pub async fn download_and_display_offers(
         };
         if let Some(offer_address) = addresses_offers_map.get(&address_str) {
             let o = &offer_address.offer;
+            let fidelity_bond_value_str = if rpc_network.is_some() {
+                let (rpc, network) = rpc_network.as_ref().unwrap();
+                let onion_hostname = if *network != Network::Regtest {
+                    address_str
+                } else {
+                    REGTEST_DUMMY_ONION_HOSTNAME
+                };
+                let txo_data = o
+                    .fidelity_bond_proof
+                    .verify_and_get_txo(&rpc, block_count, onion_hostname)
+                    .unwrap();
+                let value = o
+                    .fidelity_bond_proof
+                    .calculate_fidelity_bond_value(&rpc, block_count, &txo_data, median_time)
+                    .unwrap();
+                format!("{:.4e}", value)
+            } else {
+                String::from("unknown")
+            };
+
             println!(
-                "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12}",
+                "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12} {:<19}",
                 ii,
                 address_str,
                 o.max_size,
@@ -701,7 +738,8 @@ pub async fn download_and_display_offers(
                 o.absolute_fee_sat,
                 o.amount_relative_fee_ppb,
                 o.time_relative_fee_ppb,
-                o.minimum_locktime
+                o.minimum_locktime,
+                fidelity_bond_value_str
             );
         } else {
             println!("{:<3} {:<70} UNREACHABLE", ii, address_str);

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use bitcoin::hashes::hash160::Hash as Hash160;
 use bitcoin::secp256k1::{SecretKey, Signature};
 use bitcoin::util::ecdsa::PublicKey;
-use bitcoin::{Script, Transaction};
+use bitcoin::{OutPoint, Script, Transaction};
 
 pub const PREIMAGE_LEN: usize = 32;
 pub type Preimage = [u8; PREIMAGE_LEN];
@@ -124,6 +124,17 @@ pub struct MakerHello {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FidelityBondProof {
+    pub utxo: OutPoint,
+    pub utxo_key: PublicKey,
+    pub locktime: i64,
+    pub cert_sig: Signature,
+    pub cert_expiry: u16,
+    pub cert_pubkey: PublicKey,
+    pub onion_sig: Signature,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Offer {
     pub absolute_fee_sat: u64,
     pub amount_relative_fee_ppb: u64,
@@ -133,6 +144,7 @@ pub struct Offer {
     pub max_size: u64,
     pub min_size: u64,
     pub tweakable_point: PublicKey,
+    pub fidelity_bond_proof: FidelityBondProof,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

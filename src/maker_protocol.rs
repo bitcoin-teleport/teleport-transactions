@@ -35,6 +35,7 @@ use crate::contracts::{
 };
 use crate::directory_servers::post_maker_address_to_directory_servers;
 use crate::error::Error;
+use crate::fidelity_bonds::{HotWalletFidelityBond, REGTEST_DUMMY_ONION_HOSTNAME};
 use crate::messages::{
     HashPreimage, MakerHello, MakerToTakerMessage, Offer, PrivateKeyHandover, ProofOfFunding,
     ReceiversContractSig, SenderContractTxInfo, SendersAndReceiversContractSigs,
@@ -108,6 +109,37 @@ async fn run(
         .write()
         .unwrap()
         .refresh_offer_maxsize_cache(Arc::clone(&rpc))?;
+
+    let fidelity_bond = Arc::new(
+        wallet
+            .read()
+            .unwrap()
+            .find_most_valuable_fidelity_bond(&rpc)?
+            .expect(concat!(
+                "Unable to find fidelity bond in wallet. This is required to run a",
+                " yield generator\nTry running command `get-fidelity-bond-address`"
+            )),
+    );
+
+    let onion_hostname = if wallet.read().unwrap().network != Network::Regtest {
+        MAKER_ONION_ADDR
+    } else {
+        REGTEST_DUMMY_ONION_HOSTNAME
+    };
+    let block_count = rpc.get_block_count()?;
+    let proof = fidelity_bond.create_proof(&rpc, onion_hostname).unwrap();
+    let value = proof.calculate_fidelity_bond_value(
+        &rpc,
+        block_count,
+        &proof.verify_and_get_txo(&rpc, block_count, onion_hostname)?,
+        rpc.get_blockchain_info()?.median_time,
+    )?;
+    log::info!(
+        "Using fidelity bond utxo: {}:{} value={}",
+        fidelity_bond.utxo.txid,
+        fidelity_bond.utxo.vout,
+        value
+    );
 
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
@@ -204,6 +236,7 @@ async fn run(
         let server_loop_comms_tx = server_loop_comms_tx.clone();
         let maker_behavior = config.maker_behavior;
         let idle_connection_timeout = config.idle_connection_timeout;
+        let fidelity_bond_ref = Arc::clone(&fidelity_bond);
 
         tokio::spawn(async move {
             let (socket_reader, mut socket_writer) = socket.split();
@@ -259,6 +292,7 @@ async fn run(
                     Arc::clone(&client_rpc),
                     Arc::clone(&client_wallet),
                     addr,
+                    &fidelity_bond_ref,
                     maker_behavior,
                 )
                 .await;
@@ -312,6 +346,7 @@ async fn handle_message(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     from_addrs: SocketAddr,
+    fidelity_bond: &HotWalletFidelityBond,
     maker_behavior: MakerBehavior,
 ) -> Result<Option<MakerToTakerMessage>, Error> {
     let request: TakerToMakerMessage = match serde_json::from_str(&line) {
@@ -359,6 +394,14 @@ async fn handle_message(
                     max_size,
                     min_size: MIN_SIZE,
                     tweakable_point,
+                    fidelity_bond_proof: fidelity_bond.create_proof(
+                        &rpc,
+                        if wallet.read().unwrap().network != Network::Regtest {
+                            MAKER_ONION_ADDR
+                        } else {
+                            REGTEST_DUMMY_ONION_HOSTNAME
+                        },
+                    )?,
                 }))
             }
             TakerToMakerMessage::SignSendersContractTx(message) => {
