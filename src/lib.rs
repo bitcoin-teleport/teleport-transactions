@@ -132,7 +132,6 @@ pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
         &Vec::<_>::new(),
     )
     .unwrap();
-
     println!("Write down this seed phrase =\n{}", mnemonic.to_string());
     if !extension.trim().is_empty() {
         println!("And this extension =\n\"{}\"", extension);
@@ -141,6 +140,7 @@ pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
         "\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
         The teleport wallet file is needed to backup swapcoins"
     );
+    println!("\nSaved to file `{}`", wallet_file_name.to_string_lossy());
 
     Ok(())
 }
@@ -162,6 +162,7 @@ pub fn recover_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
     extension = extension.trim().to_string();
 
     Wallet::save_new_wallet_file(&wallet_file_name, seed_phrase, extension).unwrap();
+    println!("\nSaved to file `{}`", wallet_file_name.to_string_lossy());
     Ok(())
 }
 
