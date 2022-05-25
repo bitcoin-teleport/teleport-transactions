@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Once, RwLock};
 
 use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
-use bitcoin::{Address, Amount, Network};
+use bitcoin::{Amount, Network};
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
@@ -43,10 +43,7 @@ pub mod offerbook_sync;
 use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress};
 
 pub mod fidelity_bonds;
-use fidelity_bonds::{
-    get_locktime_from_index, read_locktime_from_timelocked_redeemscript, YearAndMonth,
-    REGTEST_DUMMY_ONION_HOSTNAME,
-};
+use fidelity_bonds::{get_locktime_from_index, YearAndMonth, REGTEST_DUMMY_ONION_HOSTNAME};
 
 pub mod directory_servers;
 pub mod error;
@@ -467,11 +464,7 @@ pub fn print_fidelity_bond_address(wallet_file_name: &PathBuf, locktime: &YearAn
     };
     wallet.startup_sync(&rpc).unwrap();
 
-    let redeemscript = wallet.get_timelocked_redeemscript_from_index(locktime.to_index());
-    let addr = Address::p2wsh(&redeemscript, wallet.network);
-    let unix_locktime = read_locktime_from_timelocked_redeemscript(&redeemscript)
-        .expect("bug: unable to read locktime");
-
+    let (addr, unix_locktime) = wallet.get_timelocked_address(locktime);
     println!(concat!(
         "WARNING: You should send coins to this address only once.",
         " Only single biggest value UTXO will be announced as a fidelity bond.",

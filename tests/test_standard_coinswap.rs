@@ -3,6 +3,7 @@ use bitcoin::Network;
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Client, RpcApi};
 
+use teleport::fidelity_bonds::YearAndMonth;
 use teleport::maker_protocol::MakerBehavior;
 use teleport::wallet_sync::{Wallet, WalletSyncAddressAmount};
 
@@ -118,6 +119,36 @@ async fn test_standard_coinswap() {
         .unwrap();
     }
 
+    // Create a fidelity bond for each maker
+    let maker1_fbond_address = maker1_wallet
+        .get_timelocked_address(&YearAndMonth::new(2030, 1))
+        .0;
+    let maker2_fbond_address = maker2_wallet
+        .get_timelocked_address(&YearAndMonth::new(2030, 1))
+        .0;
+    rpc.send_to_address(
+        &maker1_fbond_address,
+        Amount::from_btc(0.05).unwrap(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    rpc.send_to_address(
+        &maker2_fbond_address,
+        Amount::from_btc(0.05).unwrap(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+
     generate_1_block(&rpc);
 
     // Check inital wallet assertions
@@ -127,24 +158,24 @@ async fn test_standard_coinswap() {
 
     assert_eq!(
         taker_wallet
-            .list_unspent_from_wallet(&rpc, false, false)
+            .list_unspent_from_wallet(&rpc, false, true)
             .unwrap()
             .len(),
         3
     );
     assert_eq!(
         maker1_wallet
-            .list_unspent_from_wallet(&rpc, false, false)
+            .list_unspent_from_wallet(&rpc, false, true)
             .unwrap()
             .len(),
-        3
+        4
     );
     assert_eq!(
         maker2_wallet
-            .list_unspent_from_wallet(&rpc, false, false)
+            .list_unspent_from_wallet(&rpc, false, true)
             .unwrap()
             .len(),
-        3
+        4
     );
 
     assert_eq!(taker_wallet.lock_all_nonwallet_unspents(&rpc).unwrap(), ());

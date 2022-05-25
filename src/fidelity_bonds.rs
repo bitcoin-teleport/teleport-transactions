@@ -24,7 +24,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Context, Message, Secp256k1, SecretKey, Signing};
 use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
 use bitcoin::util::key::{PrivateKey, PublicKey};
-use bitcoin::OutPoint;
+use bitcoin::{Address, OutPoint};
 
 use bitcoincore_rpc::json::{GetTxOutResult, ListUnspentResultEntry};
 use bitcoincore_rpc::{Client, RpcApi};
@@ -46,6 +46,10 @@ pub struct YearAndMonth {
 }
 
 impl YearAndMonth {
+    pub fn new(year: u32, month: u32) -> YearAndMonth {
+        YearAndMonth { year, month }
+    }
+
     pub fn to_index(&self) -> u32 {
         (self.year - 2020) * 12 + (self.month - 1)
     }
@@ -368,6 +372,14 @@ impl Wallet {
             .ckd_priv(&Secp256k1::new(), ChildNumber::Normal { index })
             .unwrap()
             .private_key
+    }
+
+    pub fn get_timelocked_address(&self, locktime: &YearAndMonth) -> (Address, i64) {
+        let redeemscript = self.get_timelocked_redeemscript_from_index(locktime.to_index());
+        let addr = Address::p2wsh(&redeemscript, self.network);
+        let unix_locktime = read_locktime_from_timelocked_redeemscript(&redeemscript)
+            .expect("bug: unable to read locktime");
+        (addr, unix_locktime)
     }
 
     //returns Ok(None) if no fidelity bonds in wallet
