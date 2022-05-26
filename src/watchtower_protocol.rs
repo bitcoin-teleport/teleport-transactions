@@ -154,9 +154,9 @@ async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Re
             client_err = server_loop_err_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
-                    Error::Rpc(_e) => {
+                    Error::Rpc(e) => {
                         log::warn!("lost connection with bitcoin node, temporarily shutting \
-                                  down watchtower until connection reestablished");
+                                  down server until connection reestablished, error={:?}", e);
                         accepting_clients = false;
                         continue;
                     },
@@ -174,16 +174,20 @@ async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Re
             //TODO make a const for this magic number of how often to poll, see similar
             // comment in maker_protocol.rs
             _ = sleep(Duration::from_secs(10)) => {
-                accepting_clients = run_contract_checks(
+                let contract_check_result = run_contract_checks(
                     &rpc,
                     network,
                     &mut coinswap_in_progress_contracts,
                     &mut last_checked_block_height,
                     &mut live_contracts,
                     &mut last_checked_txid
-                ).is_ok();
+                );
+                accepting_clients = contract_check_result.is_ok();
+                if !accepting_clients {
+                    log::warn!("not accepting clients, error={:?}", contract_check_result);
+                }
 
-                log::info!("Heartbeat, accepting clients on port {}", port);
+                log::debug!("Heartbeat, accepting clients on port {}", port);
                 if *kill_flag.read().unwrap() {
                     break Err(Error::Protocol("kill flag is true"));
                 }
@@ -221,7 +225,7 @@ async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Re
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(n) if n == 0 => {
-                        log::info!("Reached EOF");
+                        log::info!("Connection closed by peer");
                         break;
                     }
                     Ok(_n) => (),

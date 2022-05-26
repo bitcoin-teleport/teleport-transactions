@@ -170,9 +170,9 @@ async fn run(
             client_err = server_loop_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
-                    Error::Rpc(_e) => {
+                    Error::Rpc(e) => {
                         log::warn!("lost connection with bitcoin node, temporarily shutting \
-                                  down server until connection reestablished");
+                                  down server until connection reestablished, error={:?}", e);
                         accepting_clients = false;
                         continue;
                     },
@@ -199,6 +199,10 @@ async fn run(
                 };
                 log::debug!("Ping: RPC = {}{}", rpc_ping_success, debug_msg);
                 accepting_clients = rpc_ping_success && watchtowers_ping_success;
+                if !accepting_clients {
+                    log::warn!("not accepting clients, rpc_ping_success={} \
+                        watchtowers_ping_success={}", rpc_ping_success, watchtowers_ping_success);
+                }
                 if *my_kill_flag.read().unwrap() {
                     break Err(Error::Protocol("kill flag is true"));
                 }
@@ -269,7 +273,7 @@ async fn run(
                     readline_ret = reader.read_line(&mut line) => {
                         match readline_ret {
                             Ok(n) if n == 0 => {
-                                log::info!("[{}] Reached EOF", addr.port());
+                                log::info!("[{}] Connection closed by peer", addr.port());
                                 break;
                             }
                             Ok(_n) => (),
