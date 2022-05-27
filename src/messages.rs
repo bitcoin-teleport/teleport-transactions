@@ -144,7 +144,6 @@ pub struct Offer {
     pub max_size: u64,
     pub min_size: u64,
     pub tweakable_point: PublicKey,
-    pub fidelity_bond_proof: FidelityBondProof,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -43,7 +43,7 @@ pub mod offerbook_sync;
 use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress};
 
 pub mod fidelity_bonds;
-use fidelity_bonds::{get_locktime_from_index, YearAndMonth, REGTEST_DUMMY_ONION_HOSTNAME};
+use fidelity_bonds::{get_locktime_from_index, YearAndMonth};
 
 pub mod directory_servers;
 pub mod error;
@@ -638,18 +638,13 @@ pub async fn download_and_display_offers(
     network_str: Option<String>,
     maker_address: Option<String>,
 ) {
-    let mut rpc_network: Option<(Client, Network)> = None;
-
     let maker_addresses = if let Some(maker_addr) = maker_address {
         vec![MakerAddress::Tor {
             address: maker_addr,
         }]
     } else {
         let network = match get_bitcoin_rpc() {
-            Ok((rpc, network)) => {
-                rpc_network = Some((rpc, network));
-                network
-            }
+            Ok((_rpc, network)) => network,
             Err(error) => {
                 if let Some(net_str) = network_str {
                     str_to_bitcoin_network(net_str.as_str())
@@ -687,14 +682,6 @@ pub async fn download_and_display_offers(
         "minlocktime",
         "fidelity bond value",
     );
-    let block_count = rpc_network
-        .as_ref()
-        .map(|(rpc, _)| rpc.get_block_count().unwrap())
-        .unwrap_or(0);
-    let median_time = rpc_network
-        .as_ref()
-        .map(|(rpc, _)| rpc.get_blockchain_info().unwrap().median_time)
-        .unwrap_or(0);
 
     for (ii, address) in maker_addresses.iter().enumerate() {
         let address_str = match &address {
@@ -703,28 +690,9 @@ pub async fn download_and_display_offers(
         };
         if let Some(offer_address) = addresses_offers_map.get(&address_str) {
             let o = &offer_address.offer;
-            let fidelity_bond_value_str = if rpc_network.is_some() {
-                let (rpc, network) = rpc_network.as_ref().unwrap();
-                let onion_hostname = if *network != Network::Regtest {
-                    address_str
-                } else {
-                    REGTEST_DUMMY_ONION_HOSTNAME
-                };
-                let txo_data = o
-                    .fidelity_bond_proof
-                    .verify_and_get_txo(&rpc, block_count, onion_hostname)
-                    .unwrap();
-                let value = o
-                    .fidelity_bond_proof
-                    .calculate_fidelity_bond_value(&rpc, block_count, &txo_data, median_time)
-                    .unwrap();
-                format!("{:.4e}", value)
-            } else {
-                String::from("unknown")
-            };
 
             println!(
-                "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12} {:<19}",
+                "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12}",
                 ii,
                 address_str,
                 o.max_size,
@@ -733,7 +701,6 @@ pub async fn download_and_display_offers(
                 o.amount_relative_fee_ppb,
                 o.time_relative_fee_ppb,
                 o.minimum_locktime,
-                fidelity_bond_value_str
             );
         } else {
             println!("{:<3} {:<70} UNREACHABLE", ii, address_str);
