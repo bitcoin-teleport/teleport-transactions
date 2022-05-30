@@ -95,7 +95,7 @@ async fn run(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) -> Result<(
     let offers_addresses = sync_offerbook(wallet.network)
         .await
         .expect("unable to sync maker addresses from directory servers");
-    log::info!("<=== Got Offers");
+    log::info!("<=== Got Offers ({} offers)", offers_addresses.len());
     log::debug!("Offers : {:#?}", offers_addresses);
     send_coinswap(rpc, wallet, config, &offers_addresses).await?;
     Ok(())
