@@ -399,10 +399,27 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
     }
 }
 
-pub fn display_wallet_addresses(wallet_file_name: &PathBuf, types: DisplayAddressType) {
+pub fn display_wallet_addresses(
+    wallet_file_name: &PathBuf,
+    types: DisplayAddressType,
+    network: Option<String>,
+) {
+    let network = match get_bitcoin_rpc() {
+        Ok((_rpc, network)) => network,
+        Err(error) => {
+            if let Some(net_str) = network {
+                str_to_bitcoin_network(net_str.as_str())
+            } else {
+                panic!(
+                    "network string not provided, and error connecting to bitcoin node: {:?}",
+                    error
+                );
+            }
+        }
+    };
     let wallet = match Wallet::load_wallet_from_file(
         wallet_file_name,
-        Network::Regtest,
+        network,
         WalletSyncAddressAmount::Normal,
     ) {
         Ok(w) => w,

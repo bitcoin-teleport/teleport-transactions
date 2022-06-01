@@ -54,6 +54,9 @@ enum Subcommand {
         /// "swap", "incomingcontract", "outgoingcontract", "contract", "fidelitybond".
         /// Default is "all"
         types: Option<DisplayAddressType>,
+        /// Network in question, options are "main", "test", "signet", "regtest". Only used
+        /// if configured bitcoin node RPC is unreachable
+        network: Option<String>,
     },
 
     /// Prints receive invoice.
@@ -135,10 +138,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::WalletBalance { long_form } => {
             teleport::display_wallet_balance(&args.wallet_file_name, long_form);
         }
-        Subcommand::DisplayWalletAddresses { types } => {
+        Subcommand::DisplayWalletAddresses { types, network } => {
             teleport::display_wallet_addresses(
                 &args.wallet_file_name,
                 types.unwrap_or(DisplayAddressType::All),
+                network,
             );
         }
         Subcommand::GetReceiveInvoice => {
