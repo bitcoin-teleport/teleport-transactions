@@ -25,7 +25,9 @@ use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 use chrono::NaiveDateTime;
 
 pub mod wallet_sync;
-use wallet_sync::{UTXOSpendInfo, Wallet, WalletSwapCoin, WalletSyncAddressAmount};
+use wallet_sync::{
+    DisplayAddressType, UTXOSpendInfo, Wallet, WalletSwapCoin, WalletSyncAddressAmount,
+};
 
 pub mod direct_send;
 use direct_send::{CoinToSpend, Destination, SendAmount};
@@ -397,7 +399,7 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
     }
 }
 
-pub fn display_wallet_keys(wallet_file_name: &PathBuf) {
+pub fn display_wallet_addresses(wallet_file_name: &PathBuf, types: DisplayAddressType) {
     let wallet = match Wallet::load_wallet_from_file(
         wallet_file_name,
         Network::Regtest,
@@ -409,7 +411,7 @@ pub fn display_wallet_keys(wallet_file_name: &PathBuf) {
             return;
         }
     };
-    wallet.print_wallet_key_data();
+    wallet.display_addresses(types);
 }
 
 pub fn print_receive_invoice(wallet_file_name: &PathBuf) {

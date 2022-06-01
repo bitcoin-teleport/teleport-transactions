@@ -9,7 +9,7 @@ use teleport;
 use teleport::direct_send::{CoinToSpend, Destination, SendAmount};
 use teleport::fidelity_bonds::YearAndMonth;
 use teleport::maker_protocol::MakerBehavior;
-use teleport::wallet_sync::WalletSyncAddressAmount;
+use teleport::wallet_sync::{DisplayAddressType, WalletSyncAddressAmount};
 use teleport::watchtower_protocol::{ContractTransaction, ContractsInfo};
 
 #[derive(Debug, StructOpt)]
@@ -48,8 +48,13 @@ enum Subcommand {
         long_form: Option<bool>,
     },
 
-    /// Dumps all information in wallet file for debugging
-    DisplayWalletKeys,
+    /// Dumps all addresses in wallet file, only useful for debugging
+    DisplayWalletAddresses {
+        /// Address types: "all", "masterkey", "seed", "incomingswap", "outgoingswap",
+        /// "swap", "incomingcontract", "outgoingcontract", "contract", "fidelitybond".
+        /// Default is "all"
+        types: Option<DisplayAddressType>,
+    },
 
     /// Prints receive invoice.
     GetReceiveInvoice,
@@ -130,8 +135,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Subcommand::WalletBalance { long_form } => {
             teleport::display_wallet_balance(&args.wallet_file_name, long_form);
         }
-        Subcommand::DisplayWalletKeys => {
-            teleport::display_wallet_keys(&args.wallet_file_name);
+        Subcommand::DisplayWalletAddresses { types } => {
+            teleport::display_wallet_addresses(
+                &args.wallet_file_name,
+                types.unwrap_or(DisplayAddressType::All),
+            );
         }
         Subcommand::GetReceiveInvoice => {
             teleport::print_receive_invoice(&args.wallet_file_name);

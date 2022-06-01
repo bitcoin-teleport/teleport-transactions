@@ -48,6 +48,8 @@ use serde_json::Value;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
+use chrono::NaiveDateTime;
+
 use crate::contracts;
 use crate::contracts::SwapCoin;
 use crate::error::Error;
@@ -92,6 +94,40 @@ pub enum WalletSyncAddressAmount {
 }
 
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
+
+#[derive(PartialEq, Debug)]
+pub enum DisplayAddressType {
+    All,
+    MasterKey,
+    Seed,
+    IncomingSwap,
+    OutgoingSwap,
+    Swap,
+    IncomingContract,
+    OutgoingContract,
+    Contract,
+    FidelityBond,
+}
+
+impl FromStr for DisplayAddressType {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "all" => DisplayAddressType::All,
+            "masterkey" => DisplayAddressType::MasterKey,
+            "seed" => DisplayAddressType::Seed,
+            "incomingswap" => DisplayAddressType::IncomingSwap,
+            "outgoingswap" => DisplayAddressType::OutgoingSwap,
+            "swap" => DisplayAddressType::Swap,
+            "incomingcontract" => DisplayAddressType::IncomingContract,
+            "outgoingcontract" => DisplayAddressType::OutgoingContract,
+            "contract" => DisplayAddressType::Contract,
+            "fidelitybond" => DisplayAddressType::FidelityBond,
+            _ => Err("unknown type")?,
+        })
+    }
+}
 
 //data needed to find information  in addition to ListUnspentResultEntry
 //about a UTXO required to spend it
@@ -443,37 +479,142 @@ impl WalletSwapCoin for OutgoingSwapCoin {
 }
 
 impl Wallet {
-    pub fn print_wallet_key_data(&self) {
-        println!(
-            "master key = {}, external_index = {}",
-            self.master_key, self.external_index
-        );
-
-        for (multisig_redeemscript, swapcoin) in &self.incoming_swapcoins {
-            Self::print_script_and_coin(multisig_redeemscript, swapcoin, self.network);
+    pub fn display_addresses(&self, types: DisplayAddressType) {
+        if types == DisplayAddressType::All || types == DisplayAddressType::MasterKey {
+            println!(
+                "master key = {}, external_index = {}",
+                self.master_key, self.external_index
+            );
         }
-        for (multisig_redeemscript, swapcoin) in &self.outgoing_swapcoins {
-            Self::print_script_and_coin(multisig_redeemscript, swapcoin, self.network);
-        }
-        println!(
-            "swapcoin count = {}",
-            self.incoming_swapcoins.len() + self.outgoing_swapcoins.len()
-        );
-    }
+        let secp = Secp256k1::new();
 
-    fn print_script_and_coin(script: &Script, coin: &dyn SwapCoin, network: Network) {
-        let contract_tx = coin.get_contract_tx();
-        println!(
-            "{} {}:{} {}",
-            Address::p2wsh(script, network),
-            contract_tx.input[0].previous_output.txid,
-            contract_tx.input[0].previous_output.vout,
-            if coin.is_hash_preimage_known() {
-                "  known"
-            } else {
-                "unknown"
+        if types == DisplayAddressType::All || types == DisplayAddressType::Seed {
+            let top_branch = ExtendedPubKey::from_private(
+                &secp,
+                &self
+                    .master_key
+                    .derive_priv(&secp, &DerivationPath::from_str(DERIVATION_PATH).unwrap())
+                    .unwrap(),
+            );
+            for c in 0..2 {
+                println!(
+                    "{} branch from seed",
+                    if c == 0 { "Receive" } else { "Change" }
+                );
+                let recv_or_change_branch = top_branch
+                    .ckd_pub(&secp, ChildNumber::Normal { index: c })
+                    .unwrap();
+                for i in 0..self.initial_address_import_count {
+                    let addr = Address::p2wpkh(
+                        &recv_or_change_branch
+                            .ckd_pub(&secp, ChildNumber::Normal { index: i as u32 })
+                            .unwrap()
+                            .public_key,
+                        self.network,
+                    )
+                    .unwrap();
+                    println!("{} from seed {}/{}/{}", addr, DERIVATION_PATH, c, i);
+                }
             }
-        )
+        }
+
+        if types == DisplayAddressType::All
+            || types == DisplayAddressType::IncomingSwap
+            || types == DisplayAddressType::Swap
+        {
+            println!(
+                "incoming swapcoin count = {}",
+                self.incoming_swapcoins.len()
+            );
+            for (multisig_redeemscript, swapcoin) in &self.incoming_swapcoins {
+                println!(
+                    "{} incoming_swapcoin other_privkey={} contract_txid={}",
+                    Address::p2wsh(multisig_redeemscript, self.network),
+                    if swapcoin.other_privkey.is_some() {
+                        "known  "
+                    } else {
+                        "unknown"
+                    },
+                    swapcoin.contract_tx.txid()
+                );
+            }
+        }
+
+        if types == DisplayAddressType::All
+            || types == DisplayAddressType::OutgoingSwap
+            || types == DisplayAddressType::Swap
+        {
+            println!(
+                "outgoing swapcoin count = {}",
+                self.outgoing_swapcoins.len()
+            );
+            for (multisig_redeemscript, swapcoin) in &self.outgoing_swapcoins {
+                println!(
+                    "{} outgoing_swapcoin contract_txid={}",
+                    Address::p2wsh(multisig_redeemscript, self.network),
+                    swapcoin.contract_tx.txid()
+                );
+            }
+        }
+
+        if types == DisplayAddressType::All
+            || types == DisplayAddressType::IncomingContract
+            || types == DisplayAddressType::Contract
+        {
+            println!(
+                "incoming swapcoin count = {}",
+                self.incoming_swapcoins.len()
+            );
+            for (_multisig_redeemscript, swapcoin) in &self.incoming_swapcoins {
+                println!(
+                    "{} incoming_swapcoin_contract hashvalue={} locktime={} contract_txid={}",
+                    Address::p2wsh(&swapcoin.contract_redeemscript, self.network),
+                    &swapcoin.get_hashvalue().to_hex()[..],
+                    swapcoin.get_timelock(),
+                    swapcoin.contract_tx.txid()
+                );
+            }
+        }
+
+        if types == DisplayAddressType::All
+            || types == DisplayAddressType::OutgoingContract
+            || types == DisplayAddressType::Contract
+        {
+            println!(
+                "outgoing swapcoin count = {}",
+                self.outgoing_swapcoins.len()
+            );
+            for (_multisig_redeemscript, swapcoin) in &self.outgoing_swapcoins {
+                println!(
+                    "{} outgoing_swapcoin_contract hashvalue={} locktime={} contract_txid={}",
+                    Address::p2wsh(&swapcoin.contract_redeemscript, self.network),
+                    &swapcoin.get_hashvalue().to_hex()[..],
+                    swapcoin.get_timelock(),
+                    swapcoin.contract_tx.txid()
+                );
+            }
+        }
+
+        if types == DisplayAddressType::All || types == DisplayAddressType::FidelityBond {
+            let mut timelocked_scripts_list = self
+                .timelocked_script_index_map
+                .iter()
+                .collect::<Vec<(&Script, &u32)>>();
+            timelocked_scripts_list.sort_by(|a, b| a.1.cmp(b.1));
+            for (timelocked_scriptpubkey, index) in &timelocked_scripts_list {
+                let locktime = fidelity_bonds::get_locktime_from_index(**index);
+                println!(
+                    "{} {}/{} [{}] locktime={}",
+                    Address::from_script(timelocked_scriptpubkey, self.network).unwrap(),
+                    fidelity_bonds::TIMELOCKED_MPK_PATH,
+                    index,
+                    NaiveDateTime::from_timestamp(locktime, 0)
+                        .format("%Y-%m-%d")
+                        .to_string(),
+                    locktime,
+                );
+            }
+        }
     }
 
     pub fn save_new_wallet_file<P: AsRef<Path>>(

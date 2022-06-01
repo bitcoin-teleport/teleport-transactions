@@ -34,7 +34,7 @@ use crate::error::Error;
 use crate::messages::FidelityBondProof;
 use crate::wallet_sync::{generate_keypair, UTXOSpendInfo, Wallet};
 
-const TIMELOCKED_MPK_PATH: &str = "m/84'/0'/0'/2";
+pub const TIMELOCKED_MPK_PATH: &str = "m/84'/0'/0'/2";
 pub const TIMELOCKED_ADDRESS_COUNT: u32 = 960;
 
 pub const REGTEST_DUMMY_ONION_HOSTNAME: &str = "regtest-dummy-onion-hostname.onion";
