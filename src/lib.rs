@@ -627,7 +627,7 @@ pub fn recover_from_incomplete_coinswap(
         .enumerate()
     {
         wallet
-            .import_wallet_redeemscript(&rpc, &swapcoin.1.get_contract_redeemscript())
+            .import_wallet_contract_redeemscript(&rpc, &swapcoin.1.get_contract_redeemscript())
             .unwrap();
 
         let signed_contract_tx = swapcoin.1.get_fully_signed_contract_tx();

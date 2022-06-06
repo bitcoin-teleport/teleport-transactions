@@ -31,7 +31,8 @@ use crate::contracts;
 use crate::contracts::SwapCoin;
 use crate::contracts::{
     calculate_coinswap_fee, find_funding_output, read_hashvalue_from_contract,
-    read_locktime_from_contract, MAKER_FUNDING_TX_VBYTE_SIZE,
+    read_locktime_from_contract, read_pubkeys_from_multisig_redeemscript,
+    MAKER_FUNDING_TX_VBYTE_SIZE,
 };
 use crate::directory_servers::post_maker_address_to_directory_servers;
 use crate::error::Error;
@@ -597,10 +598,13 @@ fn handle_proof_of_funding(
         funding_outputs.iter(),
         incoming_swapcoin_keys.iter()
     ) {
+        let (pubkey1, pubkey2) =
+            read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)
+                .ok_or(Error::Protocol("invalid multisig redeemscript"))?;
         wallet
             .read()
             .unwrap()
-            .import_wallet_redeemscript(&rpc, &funding_info.multisig_redeemscript)?;
+            .import_wallet_multisig_redeemscript(&rpc, &pubkey1, &pubkey2)?;
         wallet.read().unwrap().import_tx_with_merkleproof(
             &rpc,
             &funding_info.funding_tx,

@@ -1731,27 +1731,14 @@ impl Wallet {
             .unwrap()
             .descriptor;
 
-        let address_label = self.get_core_wallet_label();
-        let result = rpc
-            .import_multi(
-                &[ImportMultiRequest {
-                    timestamp: ImportMultiRescanSince::Now,
-                    descriptor: Some(&descriptor),
-                    watchonly: Some(true),
-                    label: Some(&address_label),
-                    ..Default::default()
-                }],
-                Some(&ImportMultiOptions {
-                    rescan: Some(false),
-                }),
-            )
-            .unwrap();
-        for r in result {
-            if !r.success {
-                //TODO proper error handling
-                panic!("failed import");
-            }
-        }
+        import_multisig_redeemscript_descriptor(
+            rpc,
+            &my_pubkey,
+            other_pubkey,
+            &self.get_core_wallet_label(),
+        )
+        .unwrap();
+
         //redeemscript and descriptor show up in `getaddressinfo` only after
         // the address gets outputs on it
         (
@@ -1762,12 +1749,26 @@ impl Wallet {
         )
     }
 
-    pub fn import_wallet_redeemscript(
+    pub fn import_wallet_contract_redeemscript(
         &self,
         rpc: &Client,
         redeemscript: &Script,
     ) -> Result<(), bitcoincore_rpc::Error> {
         import_redeemscript(rpc, redeemscript, &self.get_core_wallet_label())
+    }
+
+    pub fn import_wallet_multisig_redeemscript(
+        &self,
+        rpc: &Client,
+        pubkey1: &PublicKey,
+        pubkey2: &PublicKey,
+    ) -> Result<(), Error> {
+        Ok(import_multisig_redeemscript_descriptor(
+            rpc,
+            &pubkey1,
+            &pubkey2,
+            &self.get_core_wallet_label(),
+        )?)
     }
 
     pub fn import_tx_with_merkleproof(
@@ -1883,6 +1884,38 @@ pub fn import_watchonly_redeemscript(
     redeemscript: &Script,
 ) -> Result<(), bitcoincore_rpc::Error> {
     import_redeemscript(rpc, redeemscript, &WATCH_ONLY_SWAPCOIN_LABEL.to_string())
+}
+
+fn import_multisig_redeemscript_descriptor(
+    rpc: &Client,
+    pubkey1: &PublicKey,
+    pubkey2: &PublicKey,
+    address_label: &String,
+) -> Result<(), bitcoincore_rpc::Error> {
+    let descriptor = rpc
+        .get_descriptor_info(&format!("wsh(sortedmulti(2,{},{}))", pubkey1, pubkey2))?
+        .descriptor;
+    let result = rpc
+        .import_multi(
+            &[ImportMultiRequest {
+                timestamp: ImportMultiRescanSince::Now,
+                descriptor: Some(&descriptor),
+                watchonly: Some(true),
+                label: Some(&address_label),
+                ..Default::default()
+            }],
+            Some(&ImportMultiOptions {
+                rescan: Some(false),
+            }),
+        )
+        .unwrap();
+    for r in result {
+        if !r.success {
+            //TODO proper error handling
+            panic!("failed import");
+        }
+    }
+    Ok(())
 }
 
 pub fn import_redeemscript(
