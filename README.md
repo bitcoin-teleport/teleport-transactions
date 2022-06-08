@@ -370,12 +370,12 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9745; implement coinswap fees and taker paying for miner fees
 * &#9745; add support for connecting to makers that arent on localhost, and tor support
 * &#9745; code federated message board seeder servers
-* &#9744; ALPHA RELEASE FOR TESTNET, REGTEST, SIGNET AND MAINNET (FOR THE BRAVE ONES)
-* &#9744; code fidelity bonds
+* &#9745; ALPHA RELEASE FOR TESTNET, REGTEST, SIGNET AND MAINNET (FOR THE BRAVE ONES)
 * &#9744; have watchtower store data in a file, not in RAM
 * &#9744; have taker store the progress of a coinswap to file, so that the whole process can be easily paused and started
 * &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to back up these wallets
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
+* &#9744; code fidelity bonds
 * &#9744; add support precomputed RBF fee-bumps, so that txes can always be confirmed regardless of the block space market
 * &#9744; automated tests (might be earlier in case its useful in test driven development)
 * &#9744; move wallet files and config to its own data directory ~/.teleport/
