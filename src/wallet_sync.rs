@@ -1433,8 +1433,6 @@ impl Wallet {
         spending_tx: &mut Transaction,
         inputs_info: &mut dyn Iterator<Item = UTXOSpendInfo>,
     ) {
-        log::debug!(target: "wallet", "unsigned spending tx = {:#?}", spending_tx);
-
         let secp = Secp256k1::new();
         let master_private_key = self
             .master_key
@@ -1553,6 +1551,8 @@ impl Wallet {
     ) -> Result<(Vec<Transaction>, Vec<u32>, Vec<u64>, u64), Error> {
         //return funding_txes, position_of_output, output_value, total_miner_fee
 
+        log::debug!(target: "wallet", "coinswap_amount = {} destinations = {:?}", coinswap_amount, destinations);
+
         //TODO needs perhaps better way to create multiple txes for
         //multi-tx-coinswap could try multiple ways, and in combination
         //* use walletcreatefundedpsbt for the total amount, and if
@@ -1575,7 +1575,7 @@ impl Wallet {
         let mut output_values = Wallet::generate_amount_fractions(
             destinations.len(),
             coinswap_amount,
-            5000, //use 5000 satoshi as the lower limit for now
+            1000, //use 1000 satoshi as the lower limit for now
         )?
         .iter()
         .map(|f| (*f * coinswap_amount as f32) as u64)
@@ -1586,9 +1586,9 @@ impl Wallet {
         //this calculation works like this:
         //o = [a, b, c, ...]             | list of output values
         //t = coinswap amount            | total desired value
-        //a <-- a + (t - (a+b+c+...))    | assign new first output value
-        //a <-- a + (t -a-b-c-...)       | rearrange
-        //a <-- t - b - c -...           |
+        //a' <-- a + (t - (a+b+c+...))   | assign new first output value
+        //a' <-- a + (t -a-b-c-...)      | rearrange
+        //a' <-- t - b - c -...          |
         *output_values.first_mut().unwrap() =
             coinswap_amount - output_values.iter().skip(1).sum::<u64>();
         assert_eq!(output_values.iter().sum::<u64>(), coinswap_amount);
@@ -1621,6 +1621,8 @@ impl Wallet {
             )?;
             let decoded_psbt =
                 rpc.call::<Value>("decodepsbt", &[Value::String(psbt_result.psbt)])?;
+            log::debug!(target: "wallet", "decoded_psbt = {:?}", decoded_psbt);
+
             total_miner_fee += psbt_result.fee.as_sat();
             log::debug!(target: "wallet", "created spending tx, miner fee={}", psbt_result.fee);
 
@@ -1665,6 +1667,7 @@ impl Wallet {
                 lock_time: 0,
                 version: 2,
             };
+            log::debug!(target: "wallet", "spending_tx = {:?}", spending_tx);
 
             let mut inputs_info = decoded_psbt["inputs"]
                 .as_array()
@@ -1691,6 +1694,7 @@ impl Wallet {
                         }
                     }
                 });
+            log::debug!(target: "wallet", "inputs_info = {:?}", inputs_info);
             self.sign_transaction(&mut spending_tx, &mut inputs_info);
 
             log::debug!(target: "wallet",
@@ -1703,6 +1707,7 @@ impl Wallet {
             } else {
                 0
             };
+            log::debug!(target: "wallet", "payment_pos = {}", payment_pos);
 
             spending_txes.push(spending_tx);
             payment_output_positions.push(payment_pos);
