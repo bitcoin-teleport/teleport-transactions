@@ -13,7 +13,7 @@ use crate::wallet_sync::{UTXOSpendInfo, Wallet};
 
 #[derive(Debug)]
 pub enum SendAmount {
-    Sweep,
+    Max,
     Amount(Amount),
 }
 
@@ -21,8 +21,8 @@ impl FromStr for SendAmount {
     type Err = ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(if s == "sweep" {
-            SendAmount::Sweep
+        Ok(if s == "max" {
+            SendAmount::Max
         } else {
             SendAmount::Amount(Amount::from_sat(String::from(s).parse::<u64>()?))
         })
@@ -197,7 +197,7 @@ impl Wallet {
         output.push(TxOut {
             script_pubkey: dest_addr.script_pubkey(),
             value: match send_amount {
-                SendAmount::Sweep => total_input_value - miner_fee,
+                SendAmount::Max => total_input_value - miner_fee,
                 SendAmount::Amount(a) => a.as_sat(),
             },
         });

@@ -138,7 +138,7 @@ n   maker address                                                          max s
 
 * To run a yield generator (maker) on any network apart from regtest, you will need to create a tor hidden service for your maker. Search the web for "setup tor hidden service", a good article is [this one](https://www.linuxjournal.com/content/tor-hidden-services). When you have your hidden service hostname, copy it into the field near the top of the file `src/maker_protocol.rs`. Run with `cargo run -- --wallet-file-name=maker.teleport run-yield-generator` (note that you can omit the port number, the default port is 6102, specifying a different port number is only really needed for regtest where multiple makers are running on the same machine).
 
-* After a successful coinswap created with `do-coinswap`, the coins will still be in the wallet. You can send them out somewhere else using the command `direct-send` and providing the coin(s). For example `cargo run -- --wallet-file-name=taker.teleport direct-send sweep <destination-address> 9bfeec..0cc468:0`. Coins in the wallet can be found by running `wallet-balance` as above.
+* After a successful coinswap created with `do-coinswap`, the coins will still be in the wallet. You can send them out somewhere else using the command `direct-send` and providing the coin(s). For example `cargo run -- --wallet-file-name=taker.teleport direct-send max <destination-address> 9bfeec..0cc468:0`. Coins in the wallet can be found by running `wallet-balance` as above.
 
 ## How to recover from a failed coinswap
 

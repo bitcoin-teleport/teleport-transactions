@@ -106,7 +106,7 @@ enum Subcommand {
 
     /// Send a transaction from the wallet
     DirectSend {
-        /// Amount to send (in sats), or "sweep" for sweep
+        /// Amount to send (in sats), or "max" for fully-spending with no change
         send_amount: SendAmount,
         /// Address to send coins to, or "wallet" to send back to own wallet
         destination: Destination,
