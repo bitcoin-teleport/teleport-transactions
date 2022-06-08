@@ -114,6 +114,9 @@ async fn run(
     ping_watchtowers().await?;
 
     if wallet.read().unwrap().network != Network::Regtest {
+        if MAKER_ONION_ADDR == "myhiddenserviceaddress.onion:6102" {
+            panic!("You must set config variable MAKER_ONION_ADDR in file src/maker_protocol.rs");
+        }
         log::info!(
             "Adding my address ({}) to the directory servers. . .",
             MAKER_ONION_ADDR
