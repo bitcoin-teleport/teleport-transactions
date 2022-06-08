@@ -312,8 +312,11 @@ async fn send_coinswap(
 
         if is_taker_next_peer {
             incoming_swapcoins = create_incoming_swapcoins(
+                rpc,
+                &wallet,
                 &maker_sign_sender_and_receiver_contracts,
                 &funding_txes,
+                &funding_tx_merkleproofs,
                 &next_swap_contract_redeemscripts,
                 &next_peer_hashlock_keys_or_nonces,
                 &next_peer_multisig_pubkeys,
@@ -321,6 +324,8 @@ async fn send_coinswap(
                 preimage,
             )
             .unwrap();
+            //TODO reason about why this unwrap is here without any error handling
+            //do we expect this to never error? are the conditions checked earlier?
         }
         this_maker_multisig_privkeys = next_peer_multisig_keys_or_nonces;
         this_maker_hashlock_privkeys = next_peer_hashlock_keys_or_nonces;
@@ -1359,8 +1364,11 @@ fn create_watch_only_swapcoins(
 }
 
 fn create_incoming_swapcoins(
+    rpc: &Client,
+    wallet: &Wallet,
     maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
     funding_txes: &[Transaction],
+    funding_tx_merkleproofs: &[String],
     next_swap_contract_redeemscripts: &[Script],
     next_peer_hashlock_keys_or_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
@@ -1416,6 +1424,8 @@ fn create_incoming_swapcoins(
         next_contract_redeemscript,
         &hashlock_privkey,
         &maker_funding_tx_value,
+        funding_tx,
+        funding_tx_merkleproof,
     ) in izip!(
         next_swap_multisig_redeemscripts.iter(),
         next_peer_multisig_pubkeys.iter(),
@@ -1424,6 +1434,8 @@ fn create_incoming_swapcoins(
         next_swap_contract_redeemscripts.iter(),
         next_peer_hashlock_keys_or_nonces.iter(),
         last_makers_funding_tx_values.iter(),
+        funding_txes.iter(),
+        funding_tx_merkleproofs.iter(),
     ) {
         let (o_ms_pubkey1, o_ms_pubkey2) =
             read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)
@@ -1436,6 +1448,9 @@ fn create_incoming_swapcoins(
             }
             o_ms_pubkey1
         };
+
+        wallet.import_wallet_multisig_redeemscript(&rpc, &o_ms_pubkey1, &o_ms_pubkey2)?;
+        wallet.import_tx_with_merkleproof(&rpc, funding_tx, funding_tx_merkleproof.clone())?;
 
         let mut incoming_swapcoin = IncomingSwapCoin::new(
             maker_funded_multisig_privkey,
