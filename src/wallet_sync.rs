@@ -1443,7 +1443,7 @@ impl Wallet {
         for (ix, (mut input, input_info)) in
             spending_tx.input.iter_mut().zip(inputs_info).enumerate()
         {
-            log::debug!(target: "wallet", "signing with input_info = {:#?}", input_info);
+            log::debug!(target: "wallet", "signing with input_info = {:?}", input_info);
             match input_info {
                 UTXOSpendInfo::SwapCoin {
                     multisig_redeemscript,
@@ -1575,7 +1575,8 @@ impl Wallet {
         let mut output_values = Wallet::generate_amount_fractions(
             destinations.len(),
             coinswap_amount,
-            1000, //use 1000 satoshi as the lower limit for now
+            5000, //use 5000 satoshi as the lower limit for now
+                  //there should always be enough to pay miner fees
         )?
         .iter()
         .map(|f| (*f * coinswap_amount as f32) as u64)
