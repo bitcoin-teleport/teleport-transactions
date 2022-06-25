@@ -38,7 +38,7 @@ use bitcoin::{
 
 use bitcoincore_rpc::json::{
     ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
-    ListUnspentResultEntry, WalletCreateFundedPsbtOptions,
+    ListUnspentResultEntry,
 };
 use bitcoincore_rpc::{Client, RpcApi};
 
@@ -1430,7 +1430,7 @@ impl Wallet {
 
     pub fn sign_transaction(
         &self,
-        spending_tx: &mut Transaction,
+        tx: &mut Transaction,
         inputs_info: &mut dyn Iterator<Item = UTXOSpendInfo>,
     ) {
         let secp = Secp256k1::new();
@@ -1438,11 +1438,9 @@ impl Wallet {
             .master_key
             .derive_priv(&secp, &DerivationPath::from_str(DERIVATION_PATH).unwrap())
             .unwrap();
-        let tx_clone = spending_tx.clone();
+        let tx_clone = tx.clone();
 
-        for (ix, (mut input, input_info)) in
-            spending_tx.input.iter_mut().zip(inputs_info).enumerate()
-        {
+        for (ix, (mut input, input_info)) in tx.input.iter_mut().zip(inputs_info).enumerate() {
             log::debug!(target: "wallet", "signing with input_info = {:?}", input_info);
             match input_info {
                 UTXOSpendInfo::SwapCoin {
@@ -1511,215 +1509,83 @@ impl Wallet {
         }
     }
 
-    fn generate_amount_fractions(
-        count: usize,
-        total_amount: u64,
-        lower_limit: u64,
-    ) -> Result<Vec<f32>, Error> {
-        for _ in 0..100000 {
-            let mut knives = (1..count)
-                .map(|_| OsRng.next_u32() as f32 / u32::MAX as f32)
-                .collect::<Vec<f32>>();
-            knives.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-
-            let mut fractions = Vec::<f32>::new();
-            let mut last: f32 = 1.0;
-            for k in knives {
-                fractions.push(last - k);
-                last = k;
-            }
-            fractions.push(last);
-
-            if fractions
-                .iter()
-                .all(|f| *f * (total_amount as f32) > lower_limit as f32)
-            {
-                return Ok(fractions);
-            }
-        }
-        Err(Error::Protocol(
-            "unable to generate amount fractions, probably amount too small",
-        ))
-    }
-
-    fn create_spending_txes(
+    pub fn from_walletcreatefundedpsbt_to_tx(
         &self,
         rpc: &Client,
-        coinswap_amount: u64,
-        destinations: &[Address],
-        fee_rate: u64,
-    ) -> Result<(Vec<Transaction>, Vec<u32>, Vec<u64>, u64), Error> {
-        //return funding_txes, position_of_output, output_value, total_miner_fee
+        psbt: &String,
+    ) -> Result<Transaction, Error> {
+        //TODO rust-bitcoin handles psbt, use those functions instead
+        let decoded_psbt = rpc.call::<Value>("decodepsbt", &[Value::String(psbt.to_string())])?;
+        log::debug!(target: "wallet", "decoded_psbt = {:?}", decoded_psbt);
 
-        log::debug!(target: "wallet", "coinswap_amount = {} destinations = {:?}", coinswap_amount, destinations);
+        //TODO proper error handling, theres many unwrap()s here
+        //make this function return Result<>
+        let inputs = decoded_psbt["tx"]["vin"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|vin| TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_hex(vin["txid"].as_str().unwrap()).unwrap(),
+                    vout: vin["vout"].as_u64().unwrap() as u32,
+                },
+                sequence: 0,
+                witness: Vec::new(),
+                script_sig: Script::new(),
+            })
+            .collect::<Vec<TxIn>>();
+        let outputs = decoded_psbt["tx"]["vout"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|vout| TxOut {
+                script_pubkey: Builder::from(
+                    Vec::from_hex(vout["scriptPubKey"]["hex"].as_str().unwrap()).unwrap(),
+                )
+                .into_script(),
+                value: convert_json_rpc_bitcoin_to_satoshis(&vout["value"]),
+            })
+            .collect::<Vec<TxOut>>();
 
-        //TODO needs perhaps better way to create multiple txes for
-        //multi-tx-coinswap could try multiple ways, and in combination
-        //* use walletcreatefundedpsbt for the total amount, and if
-        //  the number if inputs UTXOs is >number_of_txes then you're done
-        //* come up with your own algorithm that sums up UTXOs
-        //  would lose bitcoin core's cool utxo choosing algorithm though
-        //  until their total value is >desired_amount
-        //* use listunspent with minimumSumAmount
-        //* pick individual utxos for no-change txes, and for the last one
-        //  use walletcreatefundedpsbt which will create change
+        let mut tx = Transaction {
+            input: inputs,
+            output: outputs,
+            lock_time: 0,
+            version: 2,
+        };
+        log::debug!(target: "wallet", "tx = {:?}", tx);
 
-        //* randomly generate some satoshi amounts and send them into
-        //  walletcreatefundedpsbt to create funding txes that create change
-        //this is the solution used right now
-
-        let change_addresses = self.get_next_internal_addresses(rpc, destinations.len() as u32)?;
-        log::debug!(target: "wallet", "change addrs = {:?}", change_addresses);
-
-        self.lock_all_nonwallet_unspents(rpc)?;
-        let mut output_values = Wallet::generate_amount_fractions(
-            destinations.len(),
-            coinswap_amount,
-            5000, //use 5000 satoshi as the lower limit for now
-                  //there should always be enough to pay miner fees
-        )?
-        .iter()
-        .map(|f| (*f * coinswap_amount as f32) as u64)
-        .collect::<Vec<u64>>();
-
-        //rounding errors mean usually 1 or 2 satoshis are lost, add them back
-
-        //this calculation works like this:
-        //o = [a, b, c, ...]             | list of output values
-        //t = coinswap amount            | total desired value
-        //a' <-- a + (t - (a+b+c+...))   | assign new first output value
-        //a' <-- a + (t -a-b-c-...)      | rearrange
-        //a' <-- t - b - c -...          |
-        *output_values.first_mut().unwrap() =
-            coinswap_amount - output_values.iter().skip(1).sum::<u64>();
-        assert_eq!(output_values.iter().sum::<u64>(), coinswap_amount);
-        log::debug!(target: "wallet", "output values = {:?}", output_values);
-
-        let mut spending_txes = Vec::<Transaction>::new();
-        let mut payment_output_positions = Vec::<u32>::new();
-        let mut total_miner_fee = 0;
-        for (address, &output_value, change_address) in izip!(
-            destinations.iter(),
-            output_values.iter(),
-            change_addresses.iter()
-        ) {
-            log::debug!(target: "wallet", "output_value = {} to addr={}", output_value, address);
-
-            let mut outputs = HashMap::<String, Amount>::new();
-            outputs.insert(address.to_string(), Amount::from_sat(output_value));
-
-            let psbt_result = rpc.wallet_create_funded_psbt(
-                &[],
-                &outputs,
-                None,
-                Some(WalletCreateFundedPsbtOptions {
-                    include_watching: Some(true),
-                    change_address: Some(change_address.clone()),
-                    fee_rate: Some(Amount::from_sat(fee_rate)),
-                    ..Default::default()
-                }),
-                None,
-            )?;
-            let decoded_psbt =
-                rpc.call::<Value>("decodepsbt", &[Value::String(psbt_result.psbt)])?;
-            log::debug!(target: "wallet", "decoded_psbt = {:?}", decoded_psbt);
-
-            total_miner_fee += psbt_result.fee.as_sat();
-            log::debug!(target: "wallet", "created spending tx, miner fee={}", psbt_result.fee);
-
-            //TODO proper error handling, theres many unwrap()s here
-            //make this function return Result<>
-            let inputs = decoded_psbt["tx"]["vin"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|vin| TxIn {
-                    previous_output: OutPoint {
-                        txid: Txid::from_hex(vin["txid"].as_str().unwrap()).unwrap(),
-                        vout: vin["vout"].as_u64().unwrap() as u32,
-                    },
-                    sequence: 0,
-                    witness: Vec::new(),
-                    script_sig: Script::new(),
-                })
-                .collect::<Vec<TxIn>>();
-            rpc.lock_unspent(
-                &inputs
-                    .iter()
-                    .map(|vin| vin.previous_output)
-                    .collect::<Vec<OutPoint>>(),
-            )?;
-            let outputs = decoded_psbt["tx"]["vout"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|vout| TxOut {
-                    script_pubkey: Builder::from(
-                        Vec::from_hex(vout["scriptPubKey"]["hex"].as_str().unwrap()).unwrap(),
-                    )
-                    .into_script(),
-                    value: convert_json_rpc_bitcoin_to_satoshis(&vout["value"]),
-                })
-                .collect::<Vec<TxOut>>();
-
-            let mut spending_tx = Transaction {
-                input: inputs,
-                output: outputs,
-                lock_time: 0,
-                version: 2,
-            };
-            log::debug!(target: "wallet", "spending_tx = {:?}", spending_tx);
-
-            let mut inputs_info = decoded_psbt["inputs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|input_info| (input_info, input_info["bip32_derivs"].as_array().unwrap()))
-                .map(|(input_info, bip32_info)| {
-                    if bip32_info.len() == 2 {
-                        UTXOSpendInfo::SwapCoin {
-                            multisig_redeemscript: Builder::from(
-                                Vec::from_hex(
-                                    &input_info["witness_script"]["hex"].as_str().unwrap(),
-                                )
+        let mut inputs_info = decoded_psbt["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|input_info| (input_info, input_info["bip32_derivs"].as_array().unwrap()))
+            .map(|(input_info, bip32_info)| {
+                if bip32_info.len() == 2 {
+                    UTXOSpendInfo::SwapCoin {
+                        multisig_redeemscript: Builder::from(
+                            Vec::from_hex(&input_info["witness_script"]["hex"].as_str().unwrap())
                                 .unwrap(),
-                            )
-                            .into_script(),
-                        }
-                    } else {
-                        UTXOSpendInfo::SeedCoin {
-                            path: bip32_info[0]["path"].as_str().unwrap().to_string(),
-                            input_value: convert_json_rpc_bitcoin_to_satoshis(
-                                &input_info["witness_utxo"]["amount"],
-                            ),
-                        }
+                        )
+                        .into_script(),
                     }
-                });
-            log::debug!(target: "wallet", "inputs_info = {:?}", inputs_info);
-            self.sign_transaction(&mut spending_tx, &mut inputs_info);
+                } else {
+                    UTXOSpendInfo::SeedCoin {
+                        path: bip32_info[0]["path"].as_str().unwrap().to_string(),
+                        input_value: convert_json_rpc_bitcoin_to_satoshis(
+                            &input_info["witness_utxo"]["amount"],
+                        ),
+                    }
+                }
+            });
+        log::debug!(target: "wallet", "inputs_info = {:?}", inputs_info);
+        self.sign_transaction(&mut tx, &mut inputs_info);
 
-            log::debug!(target: "wallet",
-                "txhex = {}",
-                bitcoin::consensus::encode::serialize_hex(&spending_tx)
-            );
-
-            let payment_pos = if psbt_result.change_position == 0 {
-                1
-            } else {
-                0
-            };
-            log::debug!(target: "wallet", "payment_pos = {}", payment_pos);
-
-            spending_txes.push(spending_tx);
-            payment_output_positions.push(payment_pos);
-        }
-
-        Ok((
-            spending_txes,
-            payment_output_positions,
-            output_values,
-            total_miner_fee,
-        ))
+        log::debug!(target: "wallet",
+            "txhex = {}",
+            bitcoin::consensus::encode::serialize_hex(&tx)
+        );
+        Ok(tx)
     }
 
     fn create_and_import_coinswap_address(
@@ -1806,10 +1672,10 @@ impl Wallet {
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
             .unzip();
-        log::debug!(target: "wallet", "coinswap_addresses = {:#?}", coinswap_addresses);
+        log::debug!(target: "wallet", "coinswap_addresses = {:?}", coinswap_addresses);
 
-        let (my_funding_txes, utxo_indexes, funding_amounts, total_miner_fee) =
-            self.create_spending_txes(rpc, total_coinswap_amount, &coinswap_addresses, fee_rate)?;
+        let create_funding_txes_result =
+            self.create_funding_txes(rpc, total_coinswap_amount, &coinswap_addresses, fee_rate)?;
         //for sweeping there would be another function, probably
         //probably have an enum called something like SendAmount which can be
         // an integer but also can be Sweep
@@ -1818,18 +1684,16 @@ impl Wallet {
 
         for (
             my_funding_tx,
-            utxo_index,
+            &utxo_index,
             &my_multisig_privkey,
             &other_multisig_pubkey,
             hashlock_pubkey,
-            &funding_amount,
         ) in izip!(
-            my_funding_txes.iter(),
-            utxo_indexes.iter(),
+            create_funding_txes_result.funding_txes.iter(),
+            create_funding_txes_result.payment_output_positions.iter(),
             my_multisig_privkeys.iter(),
             other_multisig_pubkeys.iter(),
             hashlock_pubkeys.iter(),
-            funding_amounts.iter()
         ) {
             let (timelock_pubkey, timelock_privkey) = generate_keypair();
             let contract_redeemscript = contracts::create_contract_redeemscript(
@@ -1838,10 +1702,11 @@ impl Wallet {
                 hashvalue,
                 locktime,
             );
+            let funding_amount = my_funding_tx.output[utxo_index as usize].value;
             let my_senders_contract_tx = contracts::create_senders_contract_tx(
                 OutPoint {
                     txid: my_funding_tx.txid(),
-                    vout: *utxo_index,
+                    vout: utxo_index,
                 },
                 funding_amount,
                 &contract_redeemscript,
@@ -1857,7 +1722,11 @@ impl Wallet {
             ));
         }
 
-        Ok((my_funding_txes, outgoing_swapcoins, total_miner_fee))
+        Ok((
+            create_funding_txes_result.funding_txes,
+            outgoing_swapcoins,
+            create_funding_txes_result.total_miner_fee,
+        ))
     }
 }
 
@@ -1973,7 +1842,7 @@ fn apply_two_signatures_to_2of2_multisig_spend(
     input.witness.push(redeemscript.to_bytes());
 }
 
-fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
+pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
     //to avoid floating point arithmetic, convert the bitcoin amount to
     //string with 8 decimal places, then remove the decimal point to
     //obtain the value in satoshi

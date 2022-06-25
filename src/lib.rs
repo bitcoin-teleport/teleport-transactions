@@ -49,6 +49,7 @@ use fidelity_bonds::{get_locktime_from_index, YearAndMonth};
 
 pub mod directory_servers;
 pub mod error;
+pub mod funding_tx;
 pub mod messages;
 pub mod watchtower_client;
 pub mod watchtower_protocol;
