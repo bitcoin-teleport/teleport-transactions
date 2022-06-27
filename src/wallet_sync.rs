@@ -1680,8 +1680,16 @@ impl Wallet {
         //probably have an enum called something like SendAmount which can be
         // an integer but also can be Sweep
 
-        let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
+        if create_funding_txes_result.is_none() {
+            return Err(Error::Protocol("Unable to create funding transactions"));
+            //TODO implement the idea where a maker will send its own privkey back to the
+            //taker in this situation, so if a taker gets their own funding txes mined
+            //but it turns out the maker cant fulfil the coinswap, then the taker gets both
+            //privkeys, so it can try again without wasting any time and only a bit of miner fees
+        }
+        let create_funding_txes_result = create_funding_txes_result.unwrap();
 
+        let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
         for (
             my_funding_tx,
             &utxo_index,
