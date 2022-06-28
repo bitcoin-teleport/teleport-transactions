@@ -1464,9 +1464,9 @@ impl Wallet {
                         input_value,
                         SigHashType::All,
                     );
-                    //TODO use low-R value signatures for privacy
+                    //use low-R value signatures for privacy
                     //https://en.bitcoin.it/wiki/Privacy#Wallet_fingerprinting
-                    let signature = secp.sign(
+                    let signature = secp.sign_low_r(
                         &secp256k1::Message::from_slice(&sighash[..]).unwrap(),
                         &privkey.key,
                     );
