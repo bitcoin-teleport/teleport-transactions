@@ -871,6 +871,7 @@ impl Wallet {
         rpc: &Client,
         hd_descriptors_to_import: &[&String],
         swapcoin_descriptors_to_import: &[String],
+        contract_scriptpubkeys_to_import: &[Script],
     ) -> Result<(), Error> {
         log::debug!(target: "wallet",
             "import_initial_addresses with initial_address_import_count = {}",
@@ -893,6 +894,17 @@ impl Wallet {
                     .map(|desc| ImportMultiRequest {
                         timestamp: ImportMultiRescanSince::Now,
                         descriptor: Some(desc),
+                        watchonly: Some(true),
+                        label: Some(&address_label),
+                        ..Default::default()
+                    }),
+            )
+            .chain(
+                contract_scriptpubkeys_to_import
+                    .iter()
+                    .map(|spk| ImportMultiRequest {
+                        timestamp: ImportMultiRescanSince::Now,
+                        script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
                         watchonly: Some(true),
                         label: Some(&address_label),
                         ..Default::default()
@@ -961,6 +973,39 @@ impl Wallet {
                 .filter(|d| !self.is_swapcoin_descriptor_imported(rpc, &d)),
         );
 
+        let mut contract_scriptpubkeys_to_import = self
+            .incoming_swapcoins
+            .values()
+            .map(|sc| {
+                (
+                    contracts::redeemscript_to_scriptpubkey(&sc.contract_redeemscript),
+                    rpc.get_address_info(&Address::p2wsh(&sc.contract_redeemscript, self.network)),
+                )
+            })
+            .filter(|(_, result_gai)| result_gai.is_ok())
+            .filter(|(_, result_gai)| !(result_gai.as_ref().unwrap().is_watchonly.unwrap_or(false)))
+            .map(|(c_spk, _)| c_spk)
+            .collect::<Vec<Script>>();
+
+        contract_scriptpubkeys_to_import.extend(
+            self.outgoing_swapcoins
+                .values()
+                .map(|sc| {
+                    (
+                        contracts::redeemscript_to_scriptpubkey(&sc.contract_redeemscript),
+                        rpc.get_address_info(&Address::p2wsh(
+                            &sc.contract_redeemscript,
+                            self.network,
+                        )),
+                    )
+                })
+                .filter(|(_, result_gai)| result_gai.is_ok())
+                .filter(|(_, result_gai)| {
+                    !(result_gai.as_ref().unwrap().is_watchonly.unwrap_or(false))
+                })
+                .map(|(c_spk, _)| c_spk),
+        );
+
         //get first and last timelocked script, check if both are imported
         let first_timelocked_addr = Address::p2wsh(
             &self.get_timelocked_redeemscript_from_index(0),
@@ -985,11 +1030,13 @@ impl Wallet {
 
         log::debug!(target: "wallet",
             concat!("hd_descriptors_to_import.len = {} swapcoin_descriptors_to_import.len = {}",
-                " is_timelock_branch_imported = {}"),
+                " contract_scriptpubkeys_to_import = {} is_timelock_branch_imported = {}"),
             hd_descriptors_to_import.len(), swapcoin_descriptors_to_import.len(),
+            contract_scriptpubkeys_to_import.len(),
             is_timelock_branch_imported);
         if hd_descriptors_to_import.is_empty()
             && swapcoin_descriptors_to_import.is_empty()
+            && contract_scriptpubkeys_to_import.is_empty()
             && is_timelock_branch_imported
         {
             return Ok(());
@@ -1000,6 +1047,7 @@ impl Wallet {
             rpc,
             &hd_descriptors_to_import,
             &swapcoin_descriptors_to_import,
+            &contract_scriptpubkeys_to_import,
         )?;
 
         rpc.call::<Value>("scantxoutset", &[json!("abort")])?;
@@ -1011,6 +1059,11 @@ impl Wallet {
                 "range": self.initial_address_import_count-1})
             })
             .chain(swapcoin_descriptors_to_import.iter().map(|d| json!(d)))
+            .chain(
+                contract_scriptpubkeys_to_import
+                    .iter()
+                    .map(|spk| json!({ "desc": format!("raw({:x})", spk) })),
+            )
             .chain(
                 self.timelocked_script_index_map
                     .keys()
@@ -1655,6 +1708,7 @@ impl Wallet {
             "importprunedfunds",
             &[Value::String(rawtx_hex), Value::String(merkleproof)],
         )?;
+        log::debug!(target: "wallet", "import_tx_with_merkleproof txid={}", tx.txid());
         Ok(())
     }
 
@@ -1720,6 +1774,7 @@ impl Wallet {
                 &contract_redeemscript,
             );
 
+            self.import_wallet_contract_redeemscript(rpc, &contract_redeemscript)?;
             outgoing_swapcoins.push(OutgoingSwapCoin::new(
                 my_multisig_privkey,
                 other_multisig_pubkey,

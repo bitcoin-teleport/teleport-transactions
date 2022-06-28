@@ -130,6 +130,7 @@ pub fn generate_wallet(wallet_file_name: &PathBuf) -> std::io::Result<()> {
             .iter()
             .collect::<Vec<&String>>(),
         &Vec::<_>::new(),
+        &Vec::<_>::new(),
     )
     .unwrap();
     println!("Write down this seed phrase =\n{}", mnemonic.to_string());

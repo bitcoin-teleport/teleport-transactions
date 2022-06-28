@@ -613,6 +613,10 @@ fn handle_proof_of_funding(
             &funding_info.funding_tx,
             funding_info.funding_tx_merkleproof.clone(),
         )?;
+        wallet
+            .read()
+            .unwrap()
+            .import_wallet_contract_redeemscript(&rpc, &funding_info.contract_redeemscript)?;
         let my_receivers_contract_tx = contracts::create_receivers_contract_tx(
             OutPoint {
                 txid: funding_info.funding_tx.txid(),

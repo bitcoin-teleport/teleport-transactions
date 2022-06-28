@@ -1451,6 +1451,7 @@ fn create_incoming_swapcoins(
 
         wallet.import_wallet_multisig_redeemscript(&rpc, &o_ms_pubkey1, &o_ms_pubkey2)?;
         wallet.import_tx_with_merkleproof(&rpc, funding_tx, funding_tx_merkleproof.clone())?;
+        wallet.import_wallet_contract_redeemscript(rpc, &next_contract_redeemscript)?;
 
         let mut incoming_swapcoin = IncomingSwapCoin::new(
             maker_funded_multisig_privkey,

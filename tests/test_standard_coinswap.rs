@@ -40,6 +40,7 @@ fn create_wallet_and_import(rpc: &Client, filename: PathBuf) -> Wallet {
                 .iter()
                 .collect::<Vec<&String>>(),
             &Vec::<_>::new(),
+            &Vec::<_>::new(),
         )
         .unwrap();
 
