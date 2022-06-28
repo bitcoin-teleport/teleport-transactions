@@ -225,7 +225,7 @@ Bob's coins ------> Bob coinswap address
 
 If Alice attempts to take the coins from Bob's coinswap address using her knowledge of the hash preimage and Bob's contract transaction, then Bob will be able to read the value of the hash preimage from the blockchain, and use it to take the coins from Alice's coinswap address. This happens in the worst case, but in virtually all real-life situations it will never get to that point. The contracts usually always stay unbroadcasted.
 
-So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vis versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her sole possession. The same is true for Bob.
+So at this point we've reached a situation where if Alice gets paid then Bob cannot fail to get paid, and vice versa. Now to save time and miner fees, the party which started with knowledge of the hash preimage will reveal it, and both parties will send each other their private keys corresponding to their public keys in the 2-of-2 multisigs. After this private key handover Alice will know both private keys in the relevant multisig address, and so those coins are in her sole possession. The same is true for Bob.
 
 ```
 Alice's coins ----> Bob's address
