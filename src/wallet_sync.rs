@@ -1145,7 +1145,9 @@ impl Wallet {
     fn is_utxo_ours_and_spendable_get_pointer(
         &self,
         u: &ListUnspentResultEntry,
-        contract_scriptpubkeys_outgoing_swapcoins: &HashMap<Script, &OutgoingSwapCoin>,
+        option_contract_scriptpubkeys_outgoing_swapcoins: Option<
+            &HashMap<Script, &OutgoingSwapCoin>,
+        >,
         option_contract_scriptpubkeys_incoming_swapcoins: Option<
             &HashMap<Script, &IncomingSwapCoin>,
         >,
@@ -1161,14 +1163,18 @@ impl Wallet {
         }
 
         if u.descriptor.is_none() {
-            if let Some(swapcoin) = contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key)
-            {
-                let timelock = swapcoin.get_timelock();
-                if u.confirmations >= timelock.into() {
-                    return Some(UTXOSpendInfo::TimelockContract {
-                        swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-                        input_value: u.amount.as_sat(),
-                    });
+            if option_contract_scriptpubkeys_outgoing_swapcoins.is_some() {
+                if let Some(swapcoin) = option_contract_scriptpubkeys_outgoing_swapcoins
+                    .unwrap()
+                    .get(&u.script_pub_key)
+                {
+                    let timelock = swapcoin.get_timelock();
+                    if u.confirmations >= timelock.into() {
+                        return Some(UTXOSpendInfo::TimelockContract {
+                            swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+                            input_value: u.amount.as_sat(),
+                        });
+                    }
                 }
             }
             if option_contract_scriptpubkeys_incoming_swapcoins.is_some() {
@@ -1235,19 +1241,12 @@ impl Wallet {
         //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
 
-        let contract_scriptpubkeys_outgoing_swapcoins =
-            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
         let all_unspents = rpc.list_unspent(Some(0), Some(9999999), None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
             .filter(|u| {
-                self.is_utxo_ours_and_spendable_get_pointer(
-                    u,
-                    &contract_scriptpubkeys_outgoing_swapcoins,
-                    None,
-                    false,
-                )
-                .is_none()
+                self.is_utxo_ours_and_spendable_get_pointer(u, None, None, false)
+                    .is_none()
             })
             .map(|u| OutPoint {
                 txid: u.txid,
@@ -1261,13 +1260,21 @@ impl Wallet {
     pub fn list_unspent_from_wallet(
         &self,
         rpc: &Client,
-        include_hashlocked: bool,
+        include_live_contracts: bool,
         include_fidelity_bonds: bool,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, Error> {
-        let contract_scriptpubkeys_outgoing_swapcoins =
-            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
-        let contract_scriptpubkeys_incoming_swapcoins =
-            self.create_contract_scriptpubkey_incoming_swapcoin_hashmap();
+        let (contract_scriptpubkeys_outgoing_swapcoins, contract_scriptpubkeys_incoming_swapcoins) =
+            if include_live_contracts {
+                (
+                    self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap(),
+                    self.create_contract_scriptpubkey_incoming_swapcoin_hashmap(),
+                )
+            } else {
+                (
+                    HashMap::<Script, &OutgoingSwapCoin>::new(),
+                    HashMap::<Script, &IncomingSwapCoin>::new(),
+                )
+            };
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
             .map_err(|e| Error::Rpc(e))?;
         Ok(rpc
@@ -1278,8 +1285,12 @@ impl Wallet {
                     u,
                     self.is_utxo_ours_and_spendable_get_pointer(
                         u,
-                        &contract_scriptpubkeys_outgoing_swapcoins,
-                        if include_hashlocked {
+                        if include_live_contracts {
+                            Some(&contract_scriptpubkeys_outgoing_swapcoins)
+                        } else {
+                            None
+                        },
+                        if include_live_contracts {
                             Some(&contract_scriptpubkeys_incoming_swapcoins)
                         } else {
                             None
