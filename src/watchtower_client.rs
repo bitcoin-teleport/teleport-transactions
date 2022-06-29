@@ -1,12 +1,20 @@
 const WATCHTOWER_HOSTPORT: &str = "localhost:6103";
 
+use std::time::Duration;
+
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::select;
+use tokio::time::sleep;
 
 use crate::error::Error;
 use crate::watchtower_protocol::{
     ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
 };
+
+pub const CONNECT_ATTEMPTS: u32 = 10;
+pub const CONNECT_SLEEP_DELAY_SEC: u64 = 5;
+pub const CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 10;
 
 #[tokio::main]
 pub async fn test_watchtower_client(contracts_to_watch: ContractsInfo) {
@@ -45,9 +53,8 @@ pub async fn ping_watchtowers() -> Result<(), Error> {
     .await
 }
 
-async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Result<(), Error> {
+async fn send_message_to_watchtowers_once(message: &MakerToWatchtowerMessage) -> Result<(), Error> {
     //TODO add support for registering with multiple watchtowers concurrently
-    //TODO add timeouts to deal with indefinite hangs
 
     let mut socket = TcpStream::connect(WATCHTOWER_HOSTPORT).await?;
 
@@ -83,4 +90,41 @@ async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Resu
     };
 
     Ok(())
+}
+
+async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Result<(), Error> {
+    let mut ii = 0;
+    loop {
+        ii += 1;
+        select! {
+            ret = send_message_to_watchtowers_once(message) => {
+                match ret {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to send message to watchtower, reattempting... error={:?}",
+                            e
+                        );
+                        if ii <= CONNECT_ATTEMPTS {
+                            sleep(Duration::from_secs(CONNECT_SLEEP_DELAY_SEC)).await;
+                            continue;
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                }
+            },
+            _ = sleep(Duration::from_secs(CONNECT_ATTEMPT_TIMEOUT_SEC)) => {
+                log::warn!(
+                    "Timeout for sending message to watchtower, reattempting...",
+                );
+                if ii <= CONNECT_ATTEMPTS {
+                    continue;
+                } else {
+                    return Err(Error::Protocol(
+                        "Timed out of sending message to watchtower"));
+                }
+            },
+        }
+    }
 }
