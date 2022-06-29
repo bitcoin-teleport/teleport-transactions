@@ -155,9 +155,12 @@ async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Re
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
                     Error::Rpc(e) => {
-                        log::warn!("lost connection with bitcoin node, temporarily shutting \
-                                  down server until connection reestablished, error={:?}", e);
-                        accepting_clients = false;
+                        let rpc_connection_success = rpc.get_best_block_hash().is_ok();
+                        if !rpc_connection_success {
+                            log::warn!("lost connection with bitcoin node, temporarily shutting \
+                                      down server until connection reestablished, error={:?}", e);
+                            accepting_clients = false;
+                        }
                         continue;
                     },
                     _ => log::error!("ending watchtower"),

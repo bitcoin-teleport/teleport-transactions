@@ -143,9 +143,14 @@ async fn run(
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
                     Error::Rpc(e) => {
-                        log::warn!("lost connection with bitcoin node, temporarily shutting \
-                                  down server until connection reestablished, error={:?}", e);
-                        accepting_clients = false;
+                        //doublecheck the rpc connection here because sometimes the rpc error
+                        //will be unrelated to the connection itself e.g. "insufficent funds"
+                        let rpc_connection_success = rpc.get_best_block_hash().is_ok();
+                        if !rpc_connection_success {
+                            log::warn!("lost connection with bitcoin node, temporarily shutting \
+                                      down server until connection reestablished, error={:?}", e);
+                            accepting_clients = false;
+                        }
                         continue;
                     },
                     _ => log::error!("ending server"),
