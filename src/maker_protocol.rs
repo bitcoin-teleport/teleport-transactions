@@ -46,6 +46,8 @@ use crate::wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapC
 use crate::watchtower_client::{ping_watchtowers, register_coinswap_with_watchtowers};
 use crate::watchtower_protocol::{ContractTransaction, ContractsInfo};
 
+const MAKER_HEARTBEAT_INTERVAL_SECS: u64 = 3;
+
 //used to configure the maker do weird things for testing
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
@@ -131,6 +133,7 @@ async fn run(
 
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
+    let mut last_rpc_ping = Instant::now();
     let mut last_watchtowers_ping = Instant::now();
     let mut last_directory_servers_refresh = Instant::now();
 
@@ -157,29 +160,34 @@ async fn run(
                 }
                 break Err(client_err.unwrap());
             },
-            _ = sleep(Duration::from_secs(config.rpc_ping_interval_secs)) => {
-                let rpc_ping_success = wallet
-                    .write()
-                    .unwrap()
-                    .refresh_offer_maxsize_cache(Arc::clone(&rpc))
-                    .is_ok();
+            _ = sleep(Duration::from_secs(MAKER_HEARTBEAT_INTERVAL_SECS)) => {
+                let mut rpc_ping_success = true;
+                let mut watchtowers_ping_success = true;
+
+                let rpc_ping_interval = Duration::from_secs(config.rpc_ping_interval_secs);
+                if Instant::now().saturating_duration_since(last_rpc_ping) > rpc_ping_interval {
+                    last_rpc_ping = Instant::now();
+                    rpc_ping_success = wallet
+                        .write()
+                        .unwrap()
+                        .refresh_offer_maxsize_cache(Arc::clone(&rpc))
+                        .is_ok();
+                    log::debug!("rpc_ping_success = {}", rpc_ping_success);
+                }
                 let watchtowers_ping_interval
                     = Duration::from_secs(config.watchtower_ping_interval_secs);
-                let (watchtowers_ping_success, debug_msg) = if Instant::now()
-                        .saturating_duration_since(last_watchtowers_ping)
+                if Instant::now().saturating_duration_since(last_watchtowers_ping)
                         > watchtowers_ping_interval {
                     last_watchtowers_ping = Instant::now();
-                    let w = ping_watchtowers().await;
-                    (w.is_ok(), format!(", watchtowers = {}", w.is_ok()))
-                } else {
-                    (true, String::from(""))
-                };
-                log::debug!("Ping: RPC = {}{}", rpc_ping_success, debug_msg);
+                    watchtowers_ping_success = ping_watchtowers().await.is_ok();
+                    log::debug!("watchtowers_ping_success = {}", watchtowers_ping_success);
+                }
                 accepting_clients = rpc_ping_success && watchtowers_ping_success;
                 if !accepting_clients {
                     log::warn!("not accepting clients, rpc_ping_success={} \
                         watchtowers_ping_success={}", rpc_ping_success, watchtowers_ping_success);
                 }
+
                 if *my_kill_flag.read().unwrap() {
                     break Err(Error::Protocol("kill flag is true"));
                 }
