@@ -3,6 +3,7 @@
 // makers will only ever sync this way, but one day takers may sync in other
 // ways too such as a lightweight wallet method
 
+use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::Read;
@@ -699,6 +700,10 @@ impl Wallet {
             timelocked_script_index_map: fidelity_bonds::generate_all_timelocked_addresses(&xprv),
         };
         Ok(wallet)
+    }
+
+    pub fn delete_wallet_file(&self) -> Result<(), Error> {
+        Ok(fs::remove_file(&self.wallet_file_name)?)
     }
 
     pub fn update_external_index(&mut self, new_external_index: u32) -> Result<(), Error> {
