@@ -61,6 +61,7 @@ impl Wallet {
             return ret;
         }
 
+        log::debug!(target: "wallet", "failed to create funding txes with any method");
         ret
     }
 
@@ -443,6 +444,8 @@ impl Wallet {
         }
 
         let inputs = &list_unspent_result[..list_unspent_count.unwrap()];
+        log::debug!(target: "wallet", "inputs sizes = {:?}",
+            inputs.iter().map(|(l, _)| l.amount.as_sat()).collect::<Vec<u64>>());
 
         if inputs[1..]
             .iter()
@@ -452,6 +455,9 @@ impl Wallet {
             //at least two utxos bigger than the coinswap amount
 
             //not implemented yet!
+            log::debug!(target: "wallet",
+                concat!("failed to create funding txes with the biggest-utxos method, this ",
+                    "branch not implemented"));
             Ok(None)
         } else {
             //at most one utxo bigger than the coinswap amount
