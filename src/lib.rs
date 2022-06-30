@@ -761,6 +761,7 @@ pub fn direct_send(
         .create_direct_send(&rpc, fee_rate, send_amount, destination, coins_to_spend)
         .unwrap();
     let txhex = bitcoin::consensus::encode::serialize_hex(&tx);
+    log::debug!("fully signed tx hex = {}", txhex);
     let test_mempool_accept_result = &rpc.test_mempool_accept(&[txhex.clone()]).unwrap()[0];
     if !test_mempool_accept_result.allowed {
         panic!(

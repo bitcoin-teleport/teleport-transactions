@@ -142,6 +142,7 @@ impl Wallet {
                         }
                     }
                 };
+                log::debug!("found coin to spend = {:?}", previous_output);
 
                 let sequence = match spend_info {
                     UTXOSpendInfo::TimelockContract {
@@ -230,6 +231,7 @@ impl Wallet {
             lock_time,
             version: 2,
         };
+        log::debug!("unsigned transaction = {:#?}", tx);
         self.sign_transaction(
             &mut tx,
             &mut unspent_inputs.iter().map(|(_u, usi)| usi.clone()),
