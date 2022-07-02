@@ -1,5 +1,4 @@
-use std::error;
-use std::io;
+use std::{error, fmt, io};
 
 // error enum for the whole project
 // try to make functions return this
@@ -33,5 +32,17 @@ impl From<bitcoincore_rpc::Error> for Error {
 impl From<tokio_socks::Error> for Error {
     fn from(e: tokio_socks::Error) -> Error {
         Error::Socks(e)
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::Network(ref e) => write!(f, "Network error: {}", e),
+            Error::Disk(ref e) => write!(f, "File system error: {}", e),
+            Error::Protocol(ref e) => write!(f, "Protocol error: {}", e),
+            Error::Rpc(ref e) => write!(f, "RPC error: {}", e),
+            Error::Socks(ref e) => write!(f, "SOCKS error: {}", e),
+        }
     }
 }
