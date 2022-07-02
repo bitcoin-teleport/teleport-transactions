@@ -371,7 +371,7 @@ entity is called the receiver, because they will receive the coins after the coi
 * &#9745; add support for connecting to makers that arent on localhost, and tor support
 * &#9745; code federated message board seeder servers
 * &#9745; ALPHA RELEASE FOR TESTNET, REGTEST, SIGNET AND MAINNET (FOR THE BRAVE ONES)
-* &#9744; have watchtower store data in a file, not in RAM
+* &#9745; have watchtower store data in a file, not in RAM
 * &#9744; have taker store the progress of a coinswap to file, so that the whole process can be easily paused and started
 * &#9744; add automated incremental backups for wallet files, because seed phrases aren't enough to back up these wallets
 * &#9744; study ecdsa-2p and implement ecdsa-2p multisig so the coinswaps can look identical to regular txes
