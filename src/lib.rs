@@ -791,7 +791,7 @@ pub fn direct_send(
     }
 }
 
-pub fn run_watchtower(kill_flag: Option<Arc<RwLock<bool>>>) {
+pub fn run_watchtower(data_file_path: &PathBuf, kill_flag: Option<Arc<RwLock<bool>>>) {
     let (rpc, network) = match get_bitcoin_rpc() {
         Ok(rpc) => rpc,
         Err(error) => {
@@ -802,6 +802,7 @@ pub fn run_watchtower(kill_flag: Option<Arc<RwLock<bool>>>) {
 
     watchtower_protocol::start_watchtower(
         &rpc,
+        data_file_path,
         network,
         if kill_flag.is_none() {
             Arc::new(RwLock::new(false))

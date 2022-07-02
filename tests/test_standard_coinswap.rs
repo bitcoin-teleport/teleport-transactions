@@ -15,6 +15,7 @@ use std::{thread, time};
 
 use std::str::FromStr;
 
+static WATCHTOWER_DATA: &str = "tests/watchtower.dat";
 static TAKER: &str = "tests/taker-wallet";
 static MAKER1: &str = "tests/maker-wallet-1";
 static MAKER2: &str = "tests/maker-wallet-2";
@@ -188,7 +189,10 @@ async fn test_standard_coinswap() {
     // Start watchtower, makers and taker to execute a coinswap
     let kill_flag_watchtower = kill_flag.clone();
     let watchtower_thread = thread::spawn(|| {
-        teleport::run_watchtower(Some(kill_flag_watchtower));
+        teleport::run_watchtower(
+            &PathBuf::from_str(WATCHTOWER_DATA).unwrap(),
+            Some(kill_flag_watchtower),
+        );
     });
 
     let kill_flag_maker1 = kill_flag.clone();

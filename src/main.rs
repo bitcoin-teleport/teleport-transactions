@@ -2,7 +2,7 @@ use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::{hash160::Hash as Hash160, hex::FromHex};
 use bitcoin::{Script, Transaction};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 use teleport;
@@ -116,7 +116,10 @@ enum Subcommand {
     },
 
     /// Run watchtower
-    RunWatchtower,
+    RunWatchtower {
+        /// File path used for the watchtower data file, default "watchtower.dat"
+        data_file_path: Option<PathBuf>,
+    },
 
     /// Test watchtower client
     TestWatchtowerClient {
@@ -208,8 +211,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.dont_broadcast,
             );
         }
-        Subcommand::RunWatchtower => {
-            teleport::run_watchtower(None);
+        Subcommand::RunWatchtower { data_file_path } => {
+            teleport::run_watchtower(
+                &data_file_path.unwrap_or(Path::new("watchtower.dat").to_path_buf()),
+                None,
+            );
         }
         Subcommand::TestWatchtowerClient {
             mut contract_transactions_hex,

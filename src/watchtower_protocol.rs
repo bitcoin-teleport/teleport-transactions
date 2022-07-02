@@ -4,6 +4,11 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use std::fs::File;
+use std::io;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpListener;
@@ -46,6 +51,14 @@ pub struct ContractTransaction {
 pub struct ContractsInfo {
     pub contract_txes: Vec<ContractTransaction>,
     pub wallet_label: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WatchtowerDataFile {
+    coinswap_in_progress_contracts: Vec<ContractsInfo>,
+    last_checked_block_height: Option<u64>,
+    live_contracts: Vec<ContractsInfo>,
+    last_checked_txid: Option<Txid>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,28 +135,50 @@ impl ContractsInfoDisplay {
 }
 
 #[tokio::main]
-pub async fn start_watchtower(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) {
-    match run(rpc, network, kill_flag).await {
+pub async fn start_watchtower(
+    rpc: &Client,
+    data_file_path: &PathBuf,
+    network: Network,
+    kill_flag: Arc<RwLock<bool>>,
+) {
+    match run(rpc, data_file_path, network, kill_flag).await {
         Ok(_o) => log::info!("watchtower ended without error"),
         Err(e) => log::info!("watchtower ended with err {:?}", e),
     };
 }
 
-async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Result<(), Error> {
+async fn run(
+    rpc: &Client,
+    data_file_path: &PathBuf,
+    network: Network,
+    kill_flag: Arc<RwLock<bool>>,
+) -> Result<(), Error> {
     //TODO port number in config file
     let port = 6103;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     log::info!("Starting teleport watchtower. Listening On Port {}", port);
 
-    let (watched_txes_comms_tx, mut watched_txes_comms_rx) = mpsc::channel::<ContractsInfo>(100);
+    let data_file = read_from_data_file(data_file_path);
+    if data_file.is_ok() {
+        let data_file = data_file.unwrap();
+        log::info!(
+            "Loaded data file. Coinswap contracts in progress = {}, live_contracts = {}",
+            data_file.coinswap_in_progress_contracts.len(),
+            data_file.live_contracts.len()
+        );
+    } else {
+        write_to_data_file(
+            data_file_path,
+            WatchtowerDataFile {
+                coinswap_in_progress_contracts: Vec::<ContractsInfo>::new(),
+                last_checked_block_height: None,
+                live_contracts: Vec::<ContractsInfo>::new(),
+                last_checked_txid: None,
+            },
+        )?;
+    }
 
-    //TODO these kind of things should be persisted to file rather than in memory
-    //so that if theres a crash or power cut, the watchtower can be restarted and continue watching
-    //the same transactions
-    let mut coinswap_in_progress_contracts = Vec::<ContractsInfo>::new();
-    let mut last_checked_block_height: Option<u64> = None;
-    let mut live_contracts = Vec::<ContractsInfo>::new();
-    let mut last_checked_txid: Option<Txid> = None;
+    let (watched_txes_comms_tx, mut watched_txes_comms_rx) = mpsc::channel::<ContractsInfo>(100);
 
     let (server_loop_err_comms_tx, mut server_loop_err_comms_rx) = mpsc::channel::<Error>(100);
     let mut accepting_clients = true;
@@ -170,25 +205,38 @@ async fn run(rpc: &Client, network: Network, kill_flag: Arc<RwLock<bool>>) -> Re
             new_watched_txes = watched_txes_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 let new_watched_contracts = new_watched_txes.as_ref().unwrap();
-                log::info!("new_watched_contracts = {:?}", new_watched_contracts); //TODO much spam, print txids instead
-                coinswap_in_progress_contracts.push(new_watched_contracts.clone());
+                log::info!("New watched contracts = {:?}",
+                    new_watched_contracts.contract_txes
+                        .iter()
+                        .map(|ctx| ctx.tx.txid())
+                        .collect::<Vec<Txid>>()
+                );
+
+                let mut data_file = read_from_data_file(data_file_path)?;
+                data_file.coinswap_in_progress_contracts.push(new_watched_contracts.clone());
+                write_to_data_file(data_file_path, data_file)?;
+
                 continue;
             },
             //TODO make a const for this magic number of how often to poll, see similar
             // comment in maker_protocol.rs
             _ = sleep(Duration::from_secs(10)) => {
+                let mut data_file = read_from_data_file(data_file_path)?;
+
                 let contract_check_result = run_contract_checks(
                     &rpc,
                     network,
-                    &mut coinswap_in_progress_contracts,
-                    &mut last_checked_block_height,
-                    &mut live_contracts,
-                    &mut last_checked_txid
+                    &mut data_file.coinswap_in_progress_contracts,
+                    &mut data_file.last_checked_block_height,
+                    &mut data_file.live_contracts,
+                    &mut data_file.last_checked_txid
                 );
                 accepting_clients = contract_check_result.is_ok();
                 if !accepting_clients {
                     log::warn!("not accepting clients, error={:?}", contract_check_result);
                 }
+
+                write_to_data_file(data_file_path, data_file)?;
 
                 log::debug!("Heartbeat, accepting clients on port {}", port);
                 if *kill_flag.read().unwrap() {
@@ -298,9 +346,28 @@ async fn handle_message(
             watched_txes_comms_tx
                 .send(watch_contract_txes_message.contracts_to_watch)
                 .await
-                .unwrap(); //TODO can someone crash the watchtower by maxing out this list?
+                .unwrap();
+            //TODO can someone crash the watchtower by maxing out this list?
+            //only the maker knows this watchtower's address though, a maker wont crash their own
         }
     }
+    Ok(())
+}
+
+fn read_from_data_file<P: AsRef<Path>>(data_file_path: P) -> Result<WatchtowerDataFile, Error> {
+    let mut data_file = File::open(data_file_path)?;
+    let mut data_file_str = String::new();
+    data_file.read_to_string(&mut data_file_str)?;
+    Ok(serde_json::from_str::<WatchtowerDataFile>(&data_file_str)
+        .map_err(|e| io::Error::from(e))?)
+}
+
+fn write_to_data_file<P: AsRef<Path>>(
+    data_file_path: P,
+    data: WatchtowerDataFile,
+) -> Result<(), Error> {
+    let data_file = File::create(data_file_path)?;
+    serde_json::to_writer(data_file, &data).map_err(|e| io::Error::from(e))?;
     Ok(())
 }
 
