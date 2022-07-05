@@ -84,17 +84,29 @@ pub struct TakerConfig {
 }
 
 #[tokio::main]
-pub async fn start_taker(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) {
+pub async fn start_taker(
+    rpc: &Client,
+    wallet: &mut Wallet,
+    config: TakerConfig,
+) -> Result<(), Error> {
     match run(rpc, wallet, config).await {
-        Ok(_o) => (),
-        Err(e) => log::error!("err {:?}", e),
-    };
+        Ok(_o) => Ok(()),
+        Err(e) => {
+            log::error!("err {:?}", &e);
+            return Err(Error::Protocol("Error running coinswap"));
+        }
+    }
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) -> Result<(), Error> {
     let offers_addresses = sync_offerbook(wallet.network)
         .await
         .expect("unable to sync maker addresses from directory servers");
+
+    if offers_addresses.is_empty() {
+        return Err(Error::Protocol("Error running coinswap: No offers found"));
+    }
+
     log::info!("<=== Got Offers ({} offers)", offers_addresses.len());
     log::debug!("Offers : {:#?}", offers_addresses);
     send_coinswap(rpc, wallet, config, &offers_addresses).await?;
