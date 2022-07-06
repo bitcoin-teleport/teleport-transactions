@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 use teleport;
+use teleport::cli;
 use teleport::direct_send::{CoinToSpend, Destination, SendAmount};
 use teleport::fidelity_bonds::YearAndMonth;
 use teleport::maker_protocol::MakerBehavior;
@@ -133,23 +134,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.subcommand {
         Subcommand::GenerateWallet => {
-            teleport::generate_wallet(&args.wallet_file_name)?;
+            cli::generate_wallet(&args.wallet_file_name)?;
         }
         Subcommand::RecoverWallet => {
-            teleport::recover_wallet(&args.wallet_file_name)?;
+            cli::recover_wallet(&args.wallet_file_name)?;
         }
         Subcommand::WalletBalance { long_form } => {
-            teleport::display_wallet_balance(&args.wallet_file_name, long_form);
+            cli::display_wallet_balance(&args.wallet_file_name, long_form);
         }
         Subcommand::DisplayWalletAddresses { types, network } => {
-            teleport::display_wallet_addresses(
+            cli::display_wallet_addresses(
                 &args.wallet_file_name,
                 types.unwrap_or(DisplayAddressType::All),
                 network,
             );
         }
         Subcommand::GetReceiveInvoice => {
-            teleport::print_receive_invoice(&args.wallet_file_name);
+            cli::print_receive_invoice(&args.wallet_file_name);
         }
         Subcommand::RunYieldGenerator {
             port,
@@ -159,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "closeonsignsenderscontracttx" => MakerBehavior::CloseOnSignSendersContractTx,
                 _ => MakerBehavior::Normal,
             };
-            teleport::run_maker(
+            cli::run_maker(
                 &args.wallet_file_name,
                 WalletSyncAddressAmount::Normal,
                 port.unwrap_or(6102),
@@ -168,14 +169,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Subcommand::GetFidelityBondAddress { year_and_month } => {
-            teleport::print_fidelity_bond_address(&args.wallet_file_name, &year_and_month);
+            cli::print_fidelity_bond_address(&args.wallet_file_name, &year_and_month);
         }
         Subcommand::DoCoinswap {
             send_amount,
             maker_count,
             tx_count,
         } => {
-            teleport::run_taker(
+            cli::run_taker(
                 &args.wallet_file_name,
                 WalletSyncAddressAmount::Normal,
                 args.fee_rate,
@@ -185,7 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Subcommand::RecoverFromIncompleteCoinswap { hashvalue } => {
-            teleport::recover_from_incomplete_coinswap(
+            cli::recover_from_incomplete_coinswap(
                 &args.wallet_file_name,
                 hashvalue,
                 args.dont_broadcast,
@@ -195,14 +196,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             network,
             maker_address,
         } => {
-            teleport::download_and_display_offers(network, maker_address);
+            cli::download_and_display_offers(network, maker_address);
         }
         Subcommand::DirectSend {
             send_amount,
             destination,
             coins_to_spend,
         } => {
-            teleport::direct_send(
+            cli::direct_send(
                 &args.wallet_file_name,
                 args.fee_rate,
                 send_amount,
@@ -212,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Subcommand::RunWatchtower { data_file_path } => {
-            teleport::run_watchtower(
+            cli::run_watchtower(
                 &data_file_path.unwrap_or(Path::new("watchtower.dat").to_path_buf()),
                 None,
             );

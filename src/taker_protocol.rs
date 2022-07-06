@@ -84,17 +84,29 @@ pub struct TakerConfig {
 }
 
 #[tokio::main]
-pub async fn start_taker(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) {
+pub async fn start_taker(
+    rpc: &Client,
+    wallet: &mut Wallet,
+    config: TakerConfig,
+) -> Result<(), Error> {
     match run(rpc, wallet, config).await {
-        Ok(_o) => (),
-        Err(e) => log::error!("err {:?}", e),
-    };
+        Ok(_o) => Ok(()),
+        Err(e) => {
+            log::error!("err {:?}", &e);
+            return Err(e);
+        }
+    }
 }
 
 async fn run(rpc: &Client, wallet: &mut Wallet, config: TakerConfig) -> Result<(), Error> {
     let offers_addresses = sync_offerbook(wallet.network)
         .await
         .expect("unable to sync maker addresses from directory servers");
+
+    if offers_addresses.is_empty() {
+        return Err(Error::Protocol("No offers found"));
+    }
+
     log::info!("<=== Got Offers ({} offers)", offers_addresses.len());
     log::debug!("Offers : {:#?}", offers_addresses);
     send_coinswap(rpc, wallet, config, &offers_addresses).await?;
@@ -137,7 +149,7 @@ async fn send_coinswap(
             &first_maker.offer.tweakable_point,
             config.tx_count,
         );
-        let (my_funding_txes, outgoing_swapcoins, _my_total_miner_fee) = wallet
+        let (my_funding_txes, outgoing_swapcoins, _my_total_miner_fee) = match wallet
             .initalize_coinswap(
                 rpc,
                 config.send_amount,
@@ -146,8 +158,10 @@ async fn send_coinswap(
                 hashvalue,
                 first_swap_locktime,
                 config.fee_rate,
-            )
-            .unwrap();
+            ) {
+            Ok(result) => result,
+            Err(error) => return Err(error),
+        };
         let first_maker_senders_contract_sigs = match request_senders_contract_tx_signatures(
             &first_maker.address,
             &outgoing_swapcoins,

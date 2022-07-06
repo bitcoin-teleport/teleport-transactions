@@ -192,7 +192,8 @@ async fn test_standard_coinswap() {
         teleport::run_watchtower(
             &PathBuf::from_str(WATCHTOWER_DATA).unwrap(),
             Some(kill_flag_watchtower),
-        );
+        )
+        .unwrap();
     });
 
     let kill_flag_maker1 = kill_flag.clone();
@@ -203,7 +204,8 @@ async fn test_standard_coinswap() {
             6102,
             MakerBehavior::Normal,
             Some(kill_flag_maker1),
-        );
+        )
+        .unwrap();
     });
 
     let kill_flag_maker2 = kill_flag.clone();
@@ -214,7 +216,8 @@ async fn test_standard_coinswap() {
             16102,
             MakerBehavior::Normal,
             Some(kill_flag_maker2),
-        );
+        )
+        .unwrap();
     });
 
     let taker_thread = thread::spawn(|| {
@@ -227,7 +230,8 @@ async fn test_standard_coinswap() {
             500000,
             2,
             3,
-        );
+        )
+        .unwrap();
     });
 
     let kill_flag_block_creation_thread = kill_flag.clone();

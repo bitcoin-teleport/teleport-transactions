@@ -1,2 +1,12 @@
 /target
 *.swp
+
+# Wallet files
+/*.teleport
+/*.teleport.json
+/tests/maker-wallet-1
+/tests/maker-wallet-2
+/tests/taker-wallet
+
+# Watchtower
+watchtower.dat

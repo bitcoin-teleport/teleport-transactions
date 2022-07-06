@@ -132,7 +132,7 @@ impl FromStr for DisplayAddressType {
 
 //data needed to find information  in addition to ListUnspentResultEntry
 //about a UTXO required to spend it
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum UTXOSpendInfo {
     SeedCoin {
         path: String,
@@ -1316,8 +1316,8 @@ impl Wallet {
         HashMap<
             Hash160,
             (
-                Vec<(ListUnspentResultEntry, &IncomingSwapCoin)>,
-                Vec<(ListUnspentResultEntry, &OutgoingSwapCoin)>,
+                Vec<(ListUnspentResultEntry, IncomingSwapCoin)>,
+                Vec<(ListUnspentResultEntry, OutgoingSwapCoin)>,
             ),
         >,
         Error,
@@ -1335,8 +1335,8 @@ impl Wallet {
         let mut incomplete_swapcoin_groups = HashMap::<
             Hash160,
             (
-                Vec<(ListUnspentResultEntry, &IncomingSwapCoin)>,
-                Vec<(ListUnspentResultEntry, &OutgoingSwapCoin)>,
+                Vec<(ListUnspentResultEntry, IncomingSwapCoin)>,
+                Vec<(ListUnspentResultEntry, OutgoingSwapCoin)>,
             ),
         >::new();
         let get_hashvalue = |s: &dyn SwapCoin| {
@@ -1360,22 +1360,22 @@ impl Wallet {
                     incomplete_swapcoin_groups
                         .entry(swapcoin_hashvalue)
                         .or_insert((
-                            Vec::<(ListUnspentResultEntry, &IncomingSwapCoin)>::new(),
-                            Vec::<(ListUnspentResultEntry, &OutgoingSwapCoin)>::new(),
+                            Vec::<(ListUnspentResultEntry, IncomingSwapCoin)>::new(),
+                            Vec::<(ListUnspentResultEntry, OutgoingSwapCoin)>::new(),
                         ))
                         .0
-                        .push((utxo, s));
+                        .push((utxo, s.to_owned()));
                 }
             } else if let Some(s) = self.find_outgoing_swapcoin(multisig_redeemscript) {
                 if let Some(swapcoin_hashvalue) = get_hashvalue(s) {
                     incomplete_swapcoin_groups
                         .entry(swapcoin_hashvalue)
                         .or_insert((
-                            Vec::<(ListUnspentResultEntry, &IncomingSwapCoin)>::new(),
-                            Vec::<(ListUnspentResultEntry, &OutgoingSwapCoin)>::new(),
+                            Vec::<(ListUnspentResultEntry, IncomingSwapCoin)>::new(),
+                            Vec::<(ListUnspentResultEntry, OutgoingSwapCoin)>::new(),
                         ))
                         .1
-                        .push((utxo, s));
+                        .push((utxo, s.to_owned()));
                 }
             } else {
                 continue;
